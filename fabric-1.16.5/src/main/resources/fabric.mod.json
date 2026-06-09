@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "${mod_id}",
+  "version": "${mod_version}",
+  "name": "MeFrp-MC-Mod",
+  "description": "Use ME Frp tunnels for Minecraft LAN and server play.",
+  "authors": ["MeFrp-MC-Mod Contributors"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["com.mefrp.mc.fabric.MeFrpFabric"],
+    "client": ["com.mefrp.mc.fabric.MeFrpFabricClient"]
+  },
+  "depends": {
+    "fabricloader": "${fabric_loader_version_range}",
+    "fabric": "${fabric_version_range}",
+    "minecraft": ">=${minecraft_version_min} <${minecraft_version_max}",
+    "java": ">=${java_version}"
+  }
+}

@@ -1,0 +1,53 @@
+plugins {
+    id 'java'
+    id 'net.minecraftforge.gradle' version '[7.0.17,8)'
+}
+
+version = project.mod_version + "-" + project.minecraft_version + "-forge"
+group = project.mod_group_id
+
+base {
+    archivesName = project.archives_base_name
+}
+
+minecraft {
+    mappings channel: 'official', version: project.minecraft_version
+    runs {
+        client { workingDir = layout.projectDirectory.dir('run') }
+        server { workingDir = layout.projectDirectory.dir('run'); args '--nogui' }
+    }
+}
+
+repositories {
+    minecraft.mavenizer(it)
+    maven fg.forgeMaven
+    maven fg.minecraftLibsMaven
+    mavenCentral()
+}
+
+dependencies {
+    implementation minecraft.dependency("net.minecraftforge:forge:${project.minecraft_version}-${project.forge_version}")
+    implementation project(':common')
+    implementation 'com.google.code.gson:gson:2.11.0'
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id: project.mod_id,
+            mod_version: project.mod_version,
+            forge_loader_version_range: project.forge_loader_version_range,
+            forge_version_range: project.forge_version_range,
+            minecraft_version_min: project.minecraft_version_min,
+            minecraft_version_max: project.minecraft_version_max
+    ]
+    inputs.properties replaceProperties
+    filesMatching('META-INF/mods.toml') {
+        expand replaceProperties
+    }
+}
+
+java.withSourcesJar()
+
+jar {
+    from(project(':common').sourceSets.main.output)
+}

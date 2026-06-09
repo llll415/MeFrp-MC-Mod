@@ -1,0 +1,57 @@
+plugins {
+    id 'net.fabricmc.fabric-loom-remap' version "${fabric_loom_version}"
+}
+
+version = project.mod_version + "-1.21.1-fabric"
+group = project.mod_group_id
+
+def mcVersion = '1.21.1'
+def fabricApiVersion = '0.116.12+1.21.1'
+def fabricLoaderVersion = project.fabric_loader_version
+def minecraftVersionMin = '1.21'
+def minecraftVersionMax = '1.21.2'
+def javaVersion = '21'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_21
+    targetCompatibility = JavaVersion.VERSION_21
+}
+
+tasks.withType(JavaCompile) {
+    options.release = 21
+}
+
+base {
+    archivesName = project.archives_base_name
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${mcVersion}"
+    mappings loom.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${fabricLoaderVersion}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${fabricApiVersion}"
+    implementation project(':common')
+    include 'com.google.code.gson:gson:2.11.0'
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id: project.mod_id,
+            mod_version: project.mod_version,
+            fabric_loader_version_range: project.fabric_loader_version_range,
+            fabric_version_range: project.fabric_version_range,
+            minecraft_version_min: minecraftVersionMin,
+            minecraft_version_max: minecraftVersionMax,
+            java_version: javaVersion
+    ]
+    inputs.properties replaceProperties
+    filesMatching('fabric.mod.json') {
+        expand replaceProperties
+    }
+}
+
+java.withSourcesJar()
+
+jar {
+    from(project(':common').sourceSets.main.output)
+}

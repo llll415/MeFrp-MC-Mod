@@ -1,0 +1,102 @@
+buildscript {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net' }
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        mavenCentral()
+    }
+    dependencies {
+        classpath group: 'net.minecraftforge.gradle', name: 'ForgeGradle', version: '5.1.+', changing: true
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle'
+apply plugin: 'java'
+
+evaluationDependsOn(':common-legacy')
+
+version = project.mod_version + "-1.16.5-forge"
+group = project.mod_group_id
+
+base {
+    archivesName = project.archives_base_name
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+minecraft {
+    mappings channel: 'official', version: '1.16.5'
+    runs {
+        client {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            mods { mefrpmc { source sourceSets.main } }
+        }
+        server {
+            workingDirectory project.file('run')
+            property 'forge.logging.console.level', 'debug'
+            args '--nogui'
+            mods { mefrpmc { source sourceSets.main } }
+        }
+    }
+}
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft 'net.minecraftforge:forge:1.16.5-36.2.35'
+    implementation project(':common-legacy')
+    implementation 'com.google.code.gson:gson:2.8.9'
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id: project.mod_id,
+            mod_version: project.mod_version,
+            forge_loader_version_range: '[36,)',
+            forge_version_range: '[36,)',
+            minecraft_version_min: '1.16.5',
+            minecraft_version_max: '1.17'
+    ]
+    inputs.properties replaceProperties
+    filesMatching('META-INF/mods.toml') {
+        expand replaceProperties
+    }
+}
+
+java.withSourcesJar()
+
+jar {
+}
+
+tasks.register('mergeCommonLegacyIntoJar') {
+    dependsOn jar
+    dependsOn project(':common-legacy').tasks.getByName('jar')
+    doLast {
+        ant.zip(destfile: jar.archiveFile.get().asFile, update: true) {
+            zipfileset(src: project(':common-legacy').tasks.getByName('jar').archiveFile.get().asFile) {
+                exclude(name: 'META-INF/MANIFEST.MF')
+            }
+        }
+    }
+}
+
+gradle.projectsEvaluated {
+    def reobf = tasks.findByName('reobfJar')
+    if (reobf != null) {
+        tasks.named('mergeCommonLegacyIntoJar') {
+            dependsOn reobf
+        }
+    }
+}
+
+build.dependsOn mergeCommonLegacyIntoJar

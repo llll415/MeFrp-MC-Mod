@@ -1,0 +1,51 @@
+# Gradle
+.gradle/
+build/
+**/build/
+**/.gradle/
+
+# Generated run/runtime directories
+run/
+**/run/
+logs/
+**/logs/
+crash-reports/
+**/crash-reports/
+config/mefrp.json
+config/mefrp/
+**/config/mefrp.json
+**/config/mefrp/
+
+# IDE/editor files
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local workspace/test-only directories
+/.tmp/
+/AI_MAINTENANCE.local.md
+/java_openjdk/
+/jdk25/
+/LAN/
+/LanServerProperties/
+/mcwifipnp/
+/mefrpc/
+
+# Logs and local archives
+*.log
+latest.log
+*.tmp
+*.bak
+
+# Build outputs outside build directories
+*.class
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+!**/gradle/wrapper/gradle-wrapper.jar

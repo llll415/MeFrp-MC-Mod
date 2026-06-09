@@ -1,0 +1,16 @@
+[
+  {
+    "modid": "mefrpmc",
+    "name": "MeFrp-MC-Mod",
+    "description": "MeFrp LAN tunneling helper for Minecraft.",
+    "version": "${version}",
+    "mcversion": "${mcversion}",
+    "acceptableRemoteVersions": "*",
+    "url": "https://www.mefrp.com",
+    "authorList": ["MeFrp-MC-Mod"],
+    "credits": "MeFrp",
+    "logoFile": "",
+    "screenshots": [],
+    "dependencies": []
+  }
+]

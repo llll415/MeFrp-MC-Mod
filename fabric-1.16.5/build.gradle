@@ -1,0 +1,58 @@
+plugins {
+    id 'fabric-loom' version '0.7-SNAPSHOT'
+}
+
+evaluationDependsOn(':common-legacy')
+
+version = project.mod_version + "-1.16.5-fabric"
+group = project.mod_group_id
+
+sourceCompatibility = JavaVersion.VERSION_1_8
+targetCompatibility = JavaVersion.VERSION_1_8
+
+archivesBaseName = project.archives_base_name
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    minecraft "com.mojang:minecraft:${project.minecraft_version}"
+    mappings minecraft.officialMojangMappings()
+    modImplementation "net.fabricmc:fabric-loader:${project.fabric_loader_version}"
+    modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
+    implementation project(':common-legacy')
+    include 'com.google.code.gson:gson:2.8.9'
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id: project.mod_id,
+            mod_version: project.mod_version,
+            fabric_loader_version_range: '>=0.11.3',
+            fabric_version_range: '>=0.36.0',
+            minecraft_version_min: '1.16.5',
+            minecraft_version_max: '1.17',
+            java_version: '8'
+    ]
+    inputs.properties replaceProperties
+    filesMatching('fabric.mod.json') {
+        expand replaceProperties
+    }
+}
+
+java {
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    if (JavaVersion.current().isJava9Compatible()) {
+        options.release = 8
+    }
+}
+
+jar {
+    from(project(':common-legacy').sourceSets.main.output)
+}

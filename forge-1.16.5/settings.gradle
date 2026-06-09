@@ -1,0 +1,12 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.minecraftforge.net/' }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'mefrp-mc-mod-forge-1.16.5'
+
+include 'common-legacy'
+project(':common-legacy').projectDir = file('../common-legacy')

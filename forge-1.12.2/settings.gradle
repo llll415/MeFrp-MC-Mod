@@ -1,0 +1,4 @@
+rootProject.name = 'mefrp-mc-mod-forge-1.12.2'
+
+include 'common-legacy'
+project(':common-legacy').projectDir = file('../common-legacy')

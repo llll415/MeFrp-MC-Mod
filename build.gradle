@@ -1,0 +1,26 @@
+plugins {
+    id 'java'
+    id 'dev.kikugie.stonecutter' version '0.9.5' apply false
+}
+
+allprojects {
+    group = 'com.mefrp.mc'
+    version = '1.0.0'
+    
+    repositories {
+        maven { url = 'https://maven.aliyun.com/repository/central' }
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        mavenCentral()
+        maven { url = 'https://maven.fabricmc.net/' }
+        maven { url = 'https://maven.minecraftforge.net/' }
+        maven { url = 'https://maven.neoforged.net/releases/' }
+    }
+}
+
+subprojects {
+    apply plugin: 'java'
+
+    tasks.withType(JavaCompile) {
+        options.encoding = 'UTF-8'
+    }
+}

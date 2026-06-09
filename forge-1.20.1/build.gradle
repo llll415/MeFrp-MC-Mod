@@ -1,0 +1,67 @@
+plugins {
+    id 'java'
+    id 'net.neoforged.moddev.legacyforge' version '2.0.141'
+}
+
+version = project.mod_version + "-1.20.1-forge"
+group = project.mod_group_id
+
+def forgeUserdevVersion = '1.20.1-47.4.20'
+def minecraftVersionMin = '1.20.1'
+def minecraftVersionMax = '1.20.2'
+def forgeLoaderVersionRange = '[47,)'
+def forgeVersionRange = '[47,)'
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
+
+tasks.withType(JavaCompile) {
+    options.release = 17
+}
+
+base {
+    archivesName = project.archives_base_name
+}
+
+legacyForge {
+    enable {
+        forgeVersion = forgeUserdevVersion
+    }
+    runs {
+        client { client() }
+        server { server(); programArgument '--nogui' }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+        }
+    }
+}
+
+dependencies {
+    implementation project(':common')
+    implementation 'com.google.code.gson:gson:2.10.1'
+}
+
+processResources {
+    def replaceProperties = [
+            mod_id: project.mod_id,
+            mod_version: project.mod_version,
+            forge_loader_version_range: forgeLoaderVersionRange,
+            forge_version_range: forgeVersionRange,
+            minecraft_version_min: minecraftVersionMin,
+            minecraft_version_max: minecraftVersionMax
+    ]
+    inputs.properties replaceProperties
+    filesMatching('META-INF/mods.toml') {
+        expand replaceProperties
+    }
+}
+
+java.withSourcesJar()
+
+jar {
+    from(project(':common').sourceSets.main.output)
+}

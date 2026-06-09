@@ -1,0 +1,73 @@
+buildscript {
+    repositories {
+        maven { name = 'forge'; url = 'https://maven.minecraftforge.net' }
+        maven { url = 'https://maven.aliyun.com/repository/public' }
+        mavenCentral()
+        maven { name = 'sonatype'; url = 'https://oss.sonatype.org/content/repositories/snapshots/' }
+    }
+    dependencies {
+        classpath 'net.minecraftforge.gradle:ForgeGradle:2.3-SNAPSHOT'
+    }
+}
+
+apply plugin: 'net.minecraftforge.gradle.forge'
+apply plugin: 'java'
+
+evaluationDependsOn(':common-legacy')
+
+version = project.mod_version + "-1.12.2-forge"
+group = project.mod_group_id
+archivesBaseName = project.archives_base_name
+
+sourceCompatibility = targetCompatibility = compileJava.sourceCompatibility = compileJava.targetCompatibility = '1.8'
+
+tasks.withType(JavaCompile) {
+    options.encoding = 'UTF-8'
+}
+
+minecraft {
+    version = "1.12.2-14.23.5.2768"
+    runDir = "run"
+    mappings = "stable_39"
+}
+
+repositories {
+    maven { url = 'https://maven.aliyun.com/repository/public' }
+    mavenCentral()
+}
+
+dependencies {
+    compile project(':common-legacy')
+    compile 'com.google.code.gson:gson:2.8.9'
+}
+
+jar {
+}
+
+task mergeCommonLegacyIntoJar {
+    dependsOn jar
+    dependsOn project(':common-legacy').tasks.getByName('jar')
+    mustRunAfter reobfJar
+    doLast {
+        ant.zip(destfile: jar.archivePath, update: true) {
+            zipfileset(src: project(':common-legacy').tasks.getByName('jar').archivePath) {
+                exclude(name: 'META-INF/MANIFEST.MF')
+            }
+        }
+    }
+}
+
+build.dependsOn mergeCommonLegacyIntoJar
+
+processResources {
+    inputs.property "version", project.version
+    inputs.property "mcversion", project.minecraft.version
+
+    from(sourceSets.main.resources.srcDirs) {
+        include 'mcmod.info'
+        expand 'version': project.version, 'mcversion': project.minecraft.version
+    }
+    from(sourceSets.main.resources.srcDirs) {
+        exclude 'mcmod.info'
+    }
+}

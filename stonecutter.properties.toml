@@ -1,0 +1,73 @@
+# Planned Stonecutter version matrix.
+# This file is documentation-first for now; the active Gradle build still uses
+# the existing common/fabric/forge/neoforge modules.
+
+["fabric-26.1"]
+mc.version = "26.1.2"
+mc.targets = "26.1 26.1.1 26.1.2"
+loader = "fabric"
+
+["neoforge-26.1"]
+mc.version = "26.1.2"
+mc.targets = "26.1 26.1.1 26.1.2"
+loader = "neoforge"
+
+["fabric-1.21.1"]
+mc.version = "1.21.1"
+mc.targets = "1.21 1.21.1"
+loader = "fabric"
+
+["neoforge-1.21.1"]
+mc.version = "1.21.1"
+mc.targets = "1.21 1.21.1"
+loader = "neoforge"
+
+["fabric-1.20.1"]
+mc.version = "1.20.1"
+mc.targets = "1.20.1"
+loader = "fabric"
+
+["forge-1.20.1"]
+mc.version = "1.20.1"
+mc.targets = "1.20.1"
+loader = "forge"
+
+["neoforge-1.20.1"]
+mc.version = "1.20.1"
+mc.targets = "1.20.1"
+loader = "neoforge"
+
+["fabric-1.19.2"]
+mc.version = "1.19.2"
+mc.targets = "1.19.2"
+loader = "fabric"
+
+["forge-1.19.2"]
+mc.version = "1.19.2"
+mc.targets = "1.19.2"
+loader = "forge"
+
+["fabric-1.18.2"]
+mc.version = "1.18.2"
+mc.targets = "1.18.2"
+loader = "fabric"
+
+["forge-1.18.2"]
+mc.version = "1.18.2"
+mc.targets = "1.18.2"
+loader = "forge"
+
+["forge-1.16.5"]
+mc.version = "1.16.5"
+mc.targets = "1.16.5"
+loader = "forge"
+
+["fabric-1.16.5"]
+mc.version = "1.16.5"
+mc.targets = "1.16.5"
+loader = "fabric"
+
+["forge-1.12.2"]
+mc.version = "1.12.2"
+mc.targets = "1.12.2"
+loader = "forge"
