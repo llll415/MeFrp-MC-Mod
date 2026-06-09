@@ -2,7 +2,7 @@ plugins {
     id 'net.fabricmc.fabric-loom' version "${fabric_loom_version}"
 }
 
-version = project.mod_version + "-" + project.minecraft_version + "-fabric"
+version = project.mod_version + "-" + project.minecraft_version_label + "-fabric"
 group = project.mod_group_id
 
 java {

@@ -3,7 +3,7 @@ plugins {
     id 'net.neoforged.moddev' version '2.+'
 }
 
-version = project.mod_version + "-" + project.minecraft_version + "-neoforge"
+version = project.mod_version + "-" + project.minecraft_version_label + "-neoforge"
 group = project.mod_group_id
 
 java {
