@@ -158,7 +158,7 @@ config/mefrp/bin/
 
 以下命令用于自行构建。
 
-Java 版本要求：
+目标 Java 版本：
 
 | 目标 | Java |
 | --- | --- |
@@ -168,7 +168,7 @@ Java 版本要求：
 | 1.16.5 | Java 8 |
 | 1.12.2 | Java 8 |
 
-请自行安装对应 JDK，并在本机环境中设置 `JAVA_HOME`。
+根项目已配置 Gradle Java Toolchains。开发者只需要安装一个能启动 Gradle 的 JDK；构建现代版本时，Gradle 会按需自动解析 Java 8 / 17 / 21 / 25 toolchain。若自动下载失败，请自行安装对应 JDK，并在本机 Gradle 配置中设置 `org.gradle.java.installations.paths`。
 
 现代版本使用根项目构建：
 
@@ -196,6 +196,8 @@ Forge 1.12.2 独立构建：
 cd forge-1.12.2
 ./gradlew build
 ```
+
+1.16.5 / 1.12.2 为独立老版本项目，使用各自目录内的 Gradle Wrapper 构建；这些项目不走根项目 toolchain 配置，请按对应老版本环境自行准备 JDK。
 
 ## 项目结构
 
