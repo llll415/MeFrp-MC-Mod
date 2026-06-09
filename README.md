@@ -155,6 +155,7 @@ config/mefrp/bin/
 以上测试均在 `Windows amd64` 环境测试通过`Linux`、`macOS` 未测试不做保证
 纯服务端环境大部分功能不可用，请等待后续修复
 经测试youer c1f4731a/neoforge 21.1.223均出现问题，帮助菜单不显示，启动隧道信息不显示.....
+<img width="1919" height="887" alt="11643b5b27475c4c4f869bc1d5aa5b57" src="https://github.com/user-attachments/assets/bf30466f-9c75-4af6-b914-9e9c37c577b3" />
 
 ## 构建
 
