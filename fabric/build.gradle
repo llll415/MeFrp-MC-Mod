@@ -6,6 +6,9 @@ version = project.mod_version + "-" + project.minecraft_version + "-fabric"
 group = project.mod_group_id
 
 java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(25)
+    }
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
