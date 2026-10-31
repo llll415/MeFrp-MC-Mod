@@ -44,6 +44,12 @@ latest.log
 *.tmp
 *.bak
 
+# Patch/merge leftovers and JVM crash dumps
+*.orig
+*.rej
+hs_err_pid*
+replay_pid*
+
 # Build outputs outside build directories
 *.class
 *.jar
