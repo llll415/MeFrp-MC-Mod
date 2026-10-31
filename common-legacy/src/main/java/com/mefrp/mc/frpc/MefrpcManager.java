@@ -142,7 +142,8 @@ public class MefrpcManager {
         Path binDir = platform.gameDirectory().resolve("config").resolve("mefrp").resolve("bin");
         Files.createDirectories(binDir);
         Path executable = binDir.resolve(target.fileName);
-        if (Files.exists(executable) && Files.size(executable) > 0) {
+        Path versionMarker = binDir.resolve("mefrpc.version");
+        if (Files.exists(executable) && Files.size(executable) > 0 && markerMatches(versionMarker)) {
             return executable;
         }
 
@@ -163,7 +164,16 @@ public class MefrpcManager {
         if (!target.windows) {
             executable.toFile().setExecutable(true, true);
         }
+        Files.write(versionMarker, MeFrpConstants.MEFRPC_VERSION.getBytes(StandardCharsets.UTF_8));
         return executable;
+    }
+
+    private boolean markerMatches(Path versionMarker) {
+        try {
+            return MeFrpConstants.MEFRPC_VERSION.equals(new String(Files.readAllBytes(versionMarker), StandardCharsets.UTF_8).trim());
+        } catch (IOException ignored) {
+            return false;
+        }
     }
 
     private BinaryTarget detectTarget() throws IOException {
@@ -176,6 +186,9 @@ public class MefrpcManager {
         }
         if (os.contains("linux") && amd64) {
             return new BinaryTarget("linux_amd64.gz", "mefrpc", false);
+        }
+        if (os.contains("linux") && arm64) {
+            return new BinaryTarget("linux_arm64.gz", "mefrpc", false);
         }
         if ((os.contains("mac") || os.contains("darwin")) && amd64) {
             return new BinaryTarget("darwin_amd64.gz", "mefrpc", false);
