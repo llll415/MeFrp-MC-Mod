@@ -139,23 +139,24 @@ config/mefrp.json
 config/mefrp/bin/
 ```
 
-请不要把 `config/mefrp.json` 分享给别人，里面保存了你的 MeFrp API 访问密钥
+请不要把 `config/mefrp.json` 分享给别人，里面以**明文**保存了你的 MeFrp API 访问密钥（`/mefrp token <访问密钥>` 就是直接写入这个文件）。
+因此导出或分享整合包时请格外注意，先确认该文件已移除或清空。
+若怀疑密钥泄露，请立即前往 [MeFrp 官网](https://www.mefrp.com) 用户中心重置访问密钥，以免造成损失。
 
 ## 支持版本及其测试情况
 
 | Minecraft | Fabric | NeoForge | Forge |
 | --- | --- | --- | --- |
-| 26.1.x | 支持&测试通过 | 支持&测试通过 | 不支持 |
+| 26.x | 支持&测试通过 | 支持&测试通过 | 不支持 |
 | 1.21.1 | 支持&测试通过 | 支持&测试通过 | 不支持 |
 | 1.20.1 | 支持&测试通过 | 支持&测试通过 | 支持&测试通过 |
 | 1.16.5 | 支持&测试通过 | - | 支持&测试通过 |
 | 1.12.2 | - | - | 支持&测试通过 |
 | 1.7.10 | 待定 | 待定 | 待定 |
 
-以上测试均在 `Windows amd64` 环境测试通过`Linux`、`macOS` 未测试不做保证
-纯服务端环境大部分功能不可用，请等待后续修复
-经测试youer c1f4731a/neoforge 21.1.223均出现问题，帮助菜单不显示，启动隧道信息不显示.....
-<img width="1919" height="887" alt="11643b5b27475c4c4f869bc1d5aa5b57" src="https://github.com/user-attachments/assets/bf30466f-9c75-4af6-b914-9e9c37c577b3" />
+以上各版本均在 `Windows amd64` 的客户端（主机）与纯服务端环境实测通过，`Linux`、`macOS` 未测试不做保证
+纯服务端经服务器控制台实测（未覆盖 RCON）
+混合端测试了 Youer 26.2-99e08069、Youer 1.21.1-e3158632、Mohist 1.20.1-71a84ff7，均通过
 
 ## 构建
 
@@ -165,7 +166,7 @@ config/mefrp/bin/
 
 | 目标 | Java |
 | --- | --- |
-| 26.1.x | Java 25 |
+| 26.x | Java 25 |
 | 1.21.1 | Java 21 |
 | 1.20.1 | Java 17 |
 | 1.16.5 | Java 8 |
@@ -206,8 +207,8 @@ cd forge-1.12.2
 
 ```text
 common              现代版本公共逻辑
-fabric              26.1.x Fabric
-neoforge            26.1.x NeoForge
+fabric              26.x Fabric
+neoforge            26.x NeoForge
 fabric-1.21.1       1.21.1 Fabric
 neoforge-1.21.1     1.21.1 NeoForge
 fabric-1.20.1       1.20.1 Fabric
