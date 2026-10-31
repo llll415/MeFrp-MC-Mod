@@ -6,7 +6,6 @@ import com.mojang.brigadier.arguments.IntegerArgumentType;
 import com.mojang.brigadier.arguments.StringArgumentType;
 import net.minecraft.client.Minecraft;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -51,7 +50,7 @@ public class MeFrpNeoForge {
     private static void registerCommand(CommandDispatcher<CommandSourceStack> dispatcher, boolean withSource) {
         dispatcher.register(literal("mefrp")
                 .executes(context -> run(context.getSource(), withSource))
-                .then(literal("help").executes(context -> run(context.getSource(), withSource, "help")))
+                .then(literal("help").executes(context -> run(context.getSource(), withSource, "help")).then(argument("page", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), withSource, "help"))))
                 .then(literal("token").then(argument("accessToken", StringArgumentType.string()).executes(context -> run(context.getSource(), withSource, "token", StringArgumentType.getString(context, "accessToken")))))
                 .then(literal("start").executes(context -> run(context.getSource(), withSource, "start")).then(argument("port", IntegerArgumentType.integer(1, 65535)).executes(context -> run(context.getSource(), withSource, "start", String.valueOf(IntegerArgumentType.getInteger(context, "port"))))))
                 .then(literal("stop").executes(context -> run(context.getSource(), withSource, "stop")))
@@ -77,25 +76,7 @@ public class MeFrpNeoForge {
     }
 
     private static boolean isConsoleOrRconSource(CommandSourceStack source) {
-        if (source.getEntity() instanceof ServerPlayer) {
-            return false;
-        }
-        Object rawSource = rawCommandSource(source);
-        return rawSource != null && isConsoleOrRconClass(rawSource.getClass().getName());
-    }
-
-    private static Object rawCommandSource(CommandSourceStack source) {
-        try {
-            java.lang.reflect.Field field = source.getClass().getDeclaredField("source");
-            field.setAccessible(true);
-            return field.get(source);
-        } catch (ReflectiveOperationException ignored) {
-            return null;
-        }
-    }
-
-    private static boolean isConsoleOrRconClass(String className) {
-        return className.contains("MinecraftServer") || className.contains("DedicatedServer") || className.contains("Rcon");
+        return source.getEntity() == null;
     }
 
     @EventBusSubscriber(modid = "mefrpmc", value = Dist.CLIENT)

@@ -8,6 +8,7 @@ import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.common.event.FMLInitializationEvent;
+import net.minecraftforge.fml.common.event.FMLServerStartingEvent;
 import net.minecraftforge.fml.common.event.FMLServerStoppingEvent;
 import net.minecraftforge.fml.common.eventhandler.SubscribeEvent;
 import net.minecraftforge.fml.common.gameevent.TickEvent;
@@ -16,7 +17,7 @@ import net.minecraftforge.fml.relauncher.Side;
 
 import java.util.Map;
 
-@Mod(modid = "mefrpmc", acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "*", clientSideOnly = true, useMetadata = true)
+@Mod(modid = "mefrpmc", acceptedMinecraftVersions = "[1.12.2]", acceptableRemoteVersions = "*", useMetadata = true)
 public class MeFrpForge {
     public static final MeFrpForgePlatform PLATFORM = new MeFrpForgePlatform();
     private static boolean playerWasPresent;
@@ -26,8 +27,15 @@ public class MeFrpForge {
         MeFrp.init(PLATFORM);
         MinecraftForge.EVENT_BUS.register(this);
         FMLCommonHandler.instance().bus().register(this);
-        ClientCommandHandler.instance.registerCommand(new MeFrpClientCommand());
-        ClientCommandHandler.instance.registerCommand(new MeFrpCopyCommand());
+        if (FMLCommonHandler.instance().getSide() == Side.CLIENT) {
+            ClientCommandHandler.instance.registerCommand(new MeFrpClientCommand());
+            ClientCommandHandler.instance.registerCommand(new MeFrpCopyCommand());
+        }
+    }
+
+    @Mod.EventHandler
+    public void serverStarting(FMLServerStartingEvent event) {
+        event.registerServerCommand(new MeFrpServerCommand());
     }
 
     @Mod.EventHandler

@@ -8,7 +8,6 @@ import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.command.v1.CommandRegistrationCallback;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.server.level.ServerPlayer;
 
 import static net.minecraft.commands.Commands.argument;
 import static net.minecraft.commands.Commands.literal;
@@ -33,7 +32,7 @@ public class MeFrpFabric implements ModInitializer {
     private void registerCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(literal("mefrp")
                 .executes(context -> run(context.getSource()))
-                .then(literal("help").executes(context -> run(context.getSource(), "help")))
+                .then(literal("help").executes(context -> run(context.getSource(), "help")).then(argument("page", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), "help"))))
                 .then(literal("token").then(argument("accessToken", StringArgumentType.string()).executes(context -> run(context.getSource(), "token", StringArgumentType.getString(context, "accessToken")))))
                 .then(literal("start").executes(context -> run(context.getSource(), "start")).then(argument("port", IntegerArgumentType.integer(1, 65535)).executes(context -> run(context.getSource(), "start", String.valueOf(IntegerArgumentType.getInteger(context, "port"))))))
                 .then(literal("stop").executes(context -> run(context.getSource(), "stop")))
@@ -65,24 +64,6 @@ public class MeFrpFabric implements ModInitializer {
     }
 
     private boolean isConsoleOrRconSource(CommandSourceStack source) {
-        if (source.getEntity() instanceof ServerPlayer) {
-            return false;
-        }
-        Object rawSource = rawCommandSource(source);
-        return rawSource != null && isConsoleOrRconClass(rawSource.getClass().getName());
-    }
-
-    private Object rawCommandSource(CommandSourceStack source) {
-        try {
-            java.lang.reflect.Field field = source.getClass().getDeclaredField("source");
-            field.setAccessible(true);
-            return field.get(source);
-        } catch (ReflectiveOperationException ignored) {
-            return null;
-        }
-    }
-
-    private boolean isConsoleOrRconClass(String className) {
-        return className.contains("MinecraftServer") || className.contains("DedicatedServer") || className.contains("Rcon");
+        return source.getEntity() == null;
     }
 }

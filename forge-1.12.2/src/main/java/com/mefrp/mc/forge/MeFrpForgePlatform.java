@@ -3,7 +3,9 @@ package com.mefrp.mc.forge;
 import com.mefrp.mc.platform.MeFrpPlatform;
 import io.netty.channel.ChannelFuture;
 import net.minecraft.client.Minecraft;
+import net.minecraft.command.ICommandSender;
 import net.minecraft.network.NetworkSystem;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.integrated.IntegratedServer;
 import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.Style;
@@ -11,7 +13,9 @@ import net.minecraft.util.text.TextComponentString;
 import net.minecraft.util.text.TextFormatting;
 import net.minecraft.util.text.event.ClickEvent;
 import net.minecraft.util.text.event.HoverEvent;
+import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.Loader;
+import net.minecraftforge.fml.relauncher.Side;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -26,24 +30,55 @@ import java.util.List;
 
 public class MeFrpForgePlatform implements MeFrpPlatform {
     private static final Logger LOGGER = LogManager.getLogger("MeFrp-MC-Mod");
+    private static final ThreadLocal<ICommandSender> CURRENT_SOURCE = new ThreadLocal<ICommandSender>();
+
+    public static void withSource(ICommandSender source, Runnable runnable) {
+        CURRENT_SOURCE.set(source);
+        try {
+            runnable.run();
+        } finally {
+            CURRENT_SOURCE.remove();
+        }
+    }
+
+    @Override
+    public Object captureCommandContext() {
+        return CURRENT_SOURCE.get();
+    }
+
+    @Override
+    public void runWithCommandContext(Object context, Runnable runnable) {
+        if (context instanceof ICommandSender) {
+            withSource((ICommandSender) context, runnable);
+        } else {
+            runnable.run();
+        }
+    }
 
     @Override
     public Path gameDirectory() {
-        return Paths.get(Minecraft.getMinecraft().gameDir.toURI());
+        if (isClient()) {
+            return Paths.get(Minecraft.getMinecraft().gameDir.toURI());
+        }
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        return server == null ? Paths.get(".") : server.getFile(".").toPath();
     }
 
     @Override
     public boolean isClient() {
-        return true;
+        return FMLCommonHandler.instance().getSide() == Side.CLIENT;
     }
 
     @Override
     public boolean isDedicatedServer() {
-        return false;
+        return FMLCommonHandler.instance().getSide() == Side.SERVER;
     }
 
     @Override
     public boolean isLocalServerHost() {
+        if (!isClient()) {
+            return true;
+        }
         return Minecraft.getMinecraft().getIntegratedServer() != null;
     }
 
@@ -54,7 +89,26 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
 
     @Override
     public void runOnMainThread(final Runnable runnable) {
-        Minecraft.getMinecraft().addScheduledTask(runnable);
+        final ICommandSender source = CURRENT_SOURCE.get();
+        if (isClient()) {
+            Minecraft.getMinecraft().addScheduledTask(runnable);
+            return;
+        }
+        if (source != null) {
+            source.getServer().addScheduledTask(new Runnable() {
+                @Override
+                public void run() {
+                    withSource(source, runnable);
+                }
+            });
+            return;
+        }
+        MinecraftServer server = FMLCommonHandler.instance().getMinecraftServerInstance();
+        if (server != null) {
+            server.addScheduledTask(runnable);
+            return;
+        }
+        runnable.run();
     }
 
     @Override
@@ -131,6 +185,9 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
 
     @Override
     public boolean setLanOnlineMode(boolean enabled) {
+        if (!isClient()) {
+            return false;
+        }
         IntegratedServer server = Minecraft.getMinecraft().getIntegratedServer();
         if (server == null || !server.getPublic()) {
             return false;
@@ -141,17 +198,23 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
 
     @Override
     public boolean getLanOnlineMode() {
+        if (!isClient()) {
+            return true;
+        }
         IntegratedServer server = Minecraft.getMinecraft().getIntegratedServer();
         return server == null || server.isServerInOnlineMode();
     }
 
     @Override
     public boolean supportsLanOnlineModeControl() {
-        return true;
+        return isClient();
     }
 
     @Override
     public int getPublishedLanPort() {
+        if (!isClient()) {
+            return -1;
+        }
         IntegratedServer server = Minecraft.getMinecraft().getIntegratedServer();
         if (server == null || !server.getPublic()) {
             return -1;
@@ -191,9 +254,16 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
     }
 
     private void sendComponent(ITextComponent component) {
-        if (Minecraft.getMinecraft().player != null) {
-            Minecraft.getMinecraft().player.sendMessage(component);
+        ICommandSender source = CURRENT_SOURCE.get();
+        if (source != null) {
+            source.sendMessage(component);
+            return;
         }
+        if (isClient() && Minecraft.getMinecraft().player != null) {
+            Minecraft.getMinecraft().player.sendMessage(component);
+            return;
+        }
+        LOGGER.info(component.getUnformattedText());
     }
 
     private int findEndpointPort(NetworkSystem networkSystem) {

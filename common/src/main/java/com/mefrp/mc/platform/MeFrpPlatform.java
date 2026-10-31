@@ -13,6 +13,14 @@ public interface MeFrpPlatform {
 
     void runOnMainThread(Runnable runnable);
 
+    default Object captureCommandContext() {
+        return null;
+    }
+
+    default void runWithCommandContext(Object context, Runnable runnable) {
+        runnable.run();
+    }
+
     void sendMessage(String message);
 
     void sendClickableCommand(String text, String command, String hoverText);

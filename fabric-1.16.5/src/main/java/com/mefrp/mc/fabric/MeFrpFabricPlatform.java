@@ -33,6 +33,20 @@ public class MeFrpFabricPlatform implements MeFrpPlatform {
     }
 
     @Override
+    public Object captureCommandContext() {
+        return CURRENT_SOURCE.get();
+    }
+
+    @Override
+    public void runWithCommandContext(Object context, Runnable runnable) {
+        if (context instanceof CommandSourceStack) {
+            withSource((CommandSourceStack) context, runnable);
+        } else {
+            runnable.run();
+        }
+    }
+
+    @Override
     public Path gameDirectory() {
         return FabricLoader.getInstance().getGameDir();
     }
@@ -177,7 +191,9 @@ public class MeFrpFabricPlatform implements MeFrpPlatform {
         }
         if (clientBridge != null) {
             clientBridge.sendClientMessage(component);
+            return;
         }
+        LOGGER.info(component.getString());
     }
 
     @Override

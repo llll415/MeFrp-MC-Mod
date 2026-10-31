@@ -30,6 +30,20 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
         }
     }
 
+    @Override
+    public Object captureCommandContext() {
+        return CURRENT_SOURCE.get();
+    }
+
+    @Override
+    public void runWithCommandContext(Object context, Runnable runnable) {
+        if (context instanceof CommandSource) {
+            withSource((CommandSource) context, runnable);
+        } else {
+            runnable.run();
+        }
+    }
+
     public static void setClientBridge(ClientBridge bridge) {
         clientBridge = bridge;
     }
@@ -185,6 +199,8 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
             source.sendSuccess(component, false);
         } else if (clientBridge != null) {
             clientBridge.sendClientMessage(component);
+        } else {
+            LOGGER.info(component.getString());
         }
     }
 

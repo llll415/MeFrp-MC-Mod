@@ -159,7 +159,12 @@ public class MeFrpCommandHandler {
     private void handleOnline(String[] args) {
         if (!shouldExposeOnlineModeCommand()) {
             if (!showExternalLanControllerHint()) {
-                platform.sendMessage("[MeFrp] 当前环境不支持 MeFrp 自带正版验证切换功能。");
+                if (platform.isDedicatedServer()) {
+                    platform.sendMessage("[MeFrp] 专用服务端的正版验证由 server.properties 的 online-mode 控制。");
+                    platform.sendMessage("[MeFrp] 请停止服务器，修改 online-mode 后重新启动。");
+                } else {
+                    platform.sendMessage("[MeFrp] 当前环境不支持 MeFrp 自带正版验证切换功能。");
+                }
             }
             return;
         }
@@ -656,15 +661,18 @@ public class MeFrpCommandHandler {
         return new TunnelManager(new MeFrpApiClient(MeFrpConfig.getInstance().getToken()));
     }
 
-    private void runApi(ApiTask task) {
+    private void runApi(final ApiTask task) {
+        final Object context = platform.captureCommandContext();
         executor.execute(new Runnable() { public void run() {
-            try {
-                task.run();
-            } catch (ApiException e) {
-                platform.sendMessage("[MeFrp] API 请求失败: " + e.getMessage());
-            } catch (Exception e) {
-                platform.sendMessage("[MeFrp] 操作失败: " + e.getMessage());
-            }
+            platform.runWithCommandContext(context, new Runnable() { public void run() {
+                try {
+                    task.run();
+                } catch (ApiException e) {
+                    platform.sendMessage("[MeFrp] API 请求失败: " + e.getMessage());
+                } catch (Exception e) {
+                    platform.sendMessage("[MeFrp] 操作失败: " + e.getMessage());
+                }
+            }});
         }});
     }
 
