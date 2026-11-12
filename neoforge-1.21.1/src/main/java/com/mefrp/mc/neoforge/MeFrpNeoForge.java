@@ -50,7 +50,7 @@ public class MeFrpNeoForge {
     private static void registerCommand(CommandDispatcher<CommandSourceStack> dispatcher, boolean withSource) {
         dispatcher.register(literal("mefrp")
                 .executes(context -> run(context.getSource(), withSource))
-                .then(literal("help").executes(context -> run(context.getSource(), withSource, "help")).then(argument("page", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), withSource, "help"))))
+                .then(literal("help").executes(context -> run(context.getSource(), withSource, "help")))
                 .then(literal("token").then(argument("accessToken", StringArgumentType.string()).executes(context -> run(context.getSource(), withSource, "token", StringArgumentType.getString(context, "accessToken")))))
                 .then(literal("start").executes(context -> run(context.getSource(), withSource, "start")).then(argument("port", IntegerArgumentType.integer(1, 65535)).executes(context -> run(context.getSource(), withSource, "start", String.valueOf(IntegerArgumentType.getInteger(context, "port"))))))
                 .then(literal("stop").executes(context -> run(context.getSource(), withSource, "stop")))

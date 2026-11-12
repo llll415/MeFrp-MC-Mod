@@ -111,7 +111,7 @@ MeFrp-MC-Mod 可以在游戏内帮助玩家完成 MeFrp 联机流程：检测局
 /mefrp node
 ```
 
-请先打开局域网联机节点列表会显示节点编号、地区、带宽和负载：
+请先打开局域网，再输入 `/mefrp node`。列表会显示节点编号、地区、带宽和负载：
 
 ```text
 1. #12 上海节点 | 中国大陆 | 200Mbps | 负载 18% [点击选择]
@@ -154,7 +154,7 @@ config/mefrp/bin/
 | 1.12.2 | - | - | 支持&测试通过 |
 | 1.7.10 | 待定 | 待定 | 待定 |
 
-以上各版本均在 `Windows amd64` 的客户端（主机）与纯服务端环境实测通过，`Linux`、`macOS` 未测试不做保证
+表中标注“测试通过”的版本均已在 `Windows amd64` 客户端（主机）与纯服务端环境实测通过。`Linux`、`macOS` 未测试，不做保证。
 纯服务端经服务器控制台实测（未覆盖 RCON）
 混合端测试了 Youer 26.2-99e08069、Youer 1.21.1-e3158632、Mohist 1.20.1-71a84ff7，均通过
 
@@ -172,7 +172,7 @@ config/mefrp/bin/
 | 1.16.5 | Java 8 |
 | 1.12.2 | Java 8 |
 
-根项目已配置 Gradle Java Toolchains开发者只需要安装一个能启动 Gradle 的 JDK；构建现代版本时，Gradle 会按需自动解析 Java 17 / 21 / 25 toolchain若自动下载失败，请自行安装对应 JDK，并在本机 Gradle 配置中设置 `org.gradle.java.installations.paths`
+根项目已配置 Gradle Java Toolchains。开发者只需要安装一个能启动 Gradle 的 JDK；构建现代版本时，Gradle 会按需自动解析 Java 17 / 21 / 25 toolchain。若自动下载失败，请自行安装对应 JDK，并在本机 Gradle 配置中设置 `org.gradle.java.installations.paths`。
 
 现代版本使用根项目构建：
 
@@ -201,7 +201,7 @@ cd forge-1.12.2
 ./gradlew build
 ```
 
-1.16.5 / 1.12.2 为独立老版本项目，使用各自目录内的 Gradle Wrapper 构建；这些项目不走根项目 toolchain 配置，请按对应老版本环境自行准备 JDKFabric 1.16.5 和 Forge 1.12.2 建议使用 JDK 8 构建
+1.16.5 / 1.12.2 为独立老版本项目，使用各自目录内的 Gradle Wrapper 构建；这些项目不走根项目 toolchain 配置，请按对应老版本环境自行准备 JDK。 Fabric 1.16.5 和 Forge 1.12.2 建议使用 JDK 8 构建
 
 ## 项目结构
 
@@ -231,4 +231,4 @@ forge-1.12.2        1.12.2 Forge 独立项目
 
 本项目代码使用 MIT License 开源
 
-MeFrp、MeFrp 官网、MeFrp API 服务和 `mefrpc` 的相关权利归其各自权利方所有本项目不是 MeFrp 官方项目；内置 `mefrpc` 仅用于配合本 Mod 启动穿透客户端
+MeFrp、MeFrp 官网、MeFrp API 服务和 `mefrpc` 的相关权利归其各自权利方所有。本项目不是 MeFrp 官方项目；内置 `mefrpc` 仅用于配合本 Mod 启动穿透客户端

@@ -26,7 +26,7 @@ public class MeFrpFabricClient implements ClientModInitializer {
     private void registerClientCommand(CommandDispatcher<FabricClientCommandSource> dispatcher) {
         dispatcher.register(literal("mefrp")
                 .executes(context -> run())
-                .then(literal("help").executes(context -> run("help")).then(argument("page", IntegerArgumentType.integer(1)).executes(context -> run("help"))))
+                .then(literal("help").executes(context -> run("help")))
                 .then(literal("token").then(argument("accessToken", StringArgumentType.string()).executes(context -> run("token", StringArgumentType.getString(context, "accessToken")))))
                 .then(literal("start").executes(context -> run("start")).then(argument("port", IntegerArgumentType.integer(1, 65535)).executes(context -> run("start", String.valueOf(IntegerArgumentType.getInteger(context, "port"))))))
                 .then(literal("stop").executes(context -> run("stop")))

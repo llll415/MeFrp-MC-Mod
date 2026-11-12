@@ -48,6 +48,7 @@ public class MeFrpCommandHandler {
             showClientDisabled();
             return;
         }
+        reportConfigLoadFailure(MeFrpConfig.getInstance());
         if (args.length == 0 || "help".equalsIgnoreCase(args[0])) {
             showHelp();
             return;
@@ -73,6 +74,7 @@ public class MeFrpCommandHandler {
     public void showJoinHelp() {
         platform.sendMessage("[MeFrp] MeFrp-MC-Mod");
         MeFrpConfig config = MeFrpConfig.getInstance();
+        reportConfigLoadFailure(config);
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 当前没有绑定访问密钥。");
             platform.sendMessage("[MeFrp] 请前往 MeFrp 官网用户中心获取访问密钥。");
@@ -128,7 +130,10 @@ public class MeFrpCommandHandler {
             platform.sendMessage("[MeFrp] 访问令牌可在 MeFrp 官网个人中心获取。");
             return;
         }
-        MeFrpConfig.getInstance().setToken(args[1].trim());
+        if (!MeFrpConfig.getInstance().setToken(args[1].trim())) {
+            platform.sendMessage("[MeFrp] 访问令牌保存失败，请检查配置目录是否可写。");
+            return;
+        }
         platform.sendMessage("[MeFrp] 访问令牌已保存。现在可以打开局域网后输入 /mefrp start 开始联机。");
     }
 
@@ -138,6 +143,10 @@ public class MeFrpCommandHandler {
             try {
                 explicitPort = Integer.parseInt(args[1]);
             } catch (NumberFormatException e) {
+                platform.sendMessage("[MeFrp] 端口无效，请输入 1-65535 之间的数字");
+                return;
+            }
+            if (explicitPort < 1 || explicitPort > 65535) {
                 platform.sendMessage("[MeFrp] 端口无效，请输入 1-65535 之间的数字");
                 return;
             }
@@ -178,24 +187,35 @@ public class MeFrpCommandHandler {
         }
     }
 
-    private void handleSelect(String[] args) {
+    private synchronized void handleSelect(String[] args) {
         if (args.length < 2 || pendingSelection == null) {
             platform.sendMessage("[MeFrp] 当前没有待选择的节点");
             return;
         }
+        PendingNodeSelection selection = pendingSelection;
+        if (selection.inFlight) {
+            return;
+        }
+        int index;
         try {
-            int index = Integer.parseInt(args[1]) - 1;
-            if (index < 0 || index >= pendingSelection.nodes.size()) {
-                platform.sendMessage("[MeFrp] 节点编号无效");
-                return;
-            }
-            Node node = pendingSelection.nodes.get(index);
-            PendingNodeSelection selection = pendingSelection;
-            pendingSelection = null;
-            runApi(() -> createWithSelectedNode(selection, node));
+            index = Integer.parseInt(args[1]) - 1;
         } catch (NumberFormatException e) {
             platform.sendMessage("[MeFrp] 节点编号无效");
+            return;
         }
+        if (index < 0 || index >= selection.nodes.size()) {
+            platform.sendMessage("[MeFrp] 节点编号无效");
+            return;
+        }
+        selection.inFlight = true;
+        Node node = selection.nodes.get(index);
+        runApi(() -> {
+            try {
+                createWithSelectedNode(selection, node);
+            } finally {
+                releaseSelection(selection);
+            }
+        });
     }
 
     private void startTunnel(Integer explicitPort) throws ApiException {
@@ -371,11 +391,15 @@ public class MeFrpCommandHandler {
     private void showNodeSelection(List<Node> nodes, int port, Proxy oldProxy, String title) {
         List<Node> available = new ArrayList<>(nodes);
         if (available.isEmpty()) {
+            clearPendingSelection();
             platform.sendMessage("[MeFrp] 没有可用在线节点，请稍后再试。");
             return;
         }
         Map<Integer, NodeStatus> statuses = nodeStatusesById();
-        pendingSelection = new PendingNodeSelection(available, statuses, port, oldProxy);
+        PendingNodeSelection selection = new PendingNodeSelection(available, statuses, port, oldProxy);
+        synchronized (this) {
+            pendingSelection = selection;
+        }
         platform.sendMessage("[MeFrp] " + title + ":");
         for (int i = 0; i < available.size(); i++) {
             Node node = available.get(i);
@@ -427,6 +451,7 @@ public class MeFrpCommandHandler {
                 return;
             }
         }
+        clearSelectionIfCurrent(selection);
         TunnelManager tunnels = tunnelManager();
         if (selection.oldProxy != null) {
             tunnels.deleteProxy(selection.oldProxy);
@@ -600,7 +625,7 @@ public class MeFrpCommandHandler {
         if (user.todaySigned) {
             platform.sendMessage("[MeFrp] 今日签到: 已签到");
         } else {
-            platform.sendClickableCommand("[MeFrp] 今日签到: 未签到 ", "[点击签到]", "/mefrp sign", "点击执行今日签到");
+            platform.sendClickableCommand("[MeFrp] 今日签到: 未签到 ", "[点击签到]", "/mefrp sign", "查看签到说明");
         }
         platform.sendMessage("[MeFrp] 剩余流量: " + formatTrafficMb(user.traffic));
         platform.sendMessage("[MeFrp] 限速: 上行 " + formatSpeed(user.outBound) + " / 下行 " + formatSpeed(user.inBound));
@@ -645,6 +670,34 @@ public class MeFrpCommandHandler {
 
     private TunnelManager tunnelManager() {
         return new TunnelManager(new MeFrpApiClient(MeFrpConfig.getInstance().getToken()));
+    }
+
+    private void reportConfigLoadFailure(MeFrpConfig config) {
+        if (config.consumeLoadFailure()) {
+            platform.sendMessage("[MeFrp] 配置读取失败，请检查 config/mefrp.json。");
+        }
+    }
+
+    private void releaseSelection(PendingNodeSelection selection) {
+        synchronized (this) {
+            if (pendingSelection == selection) {
+                selection.inFlight = false;
+            }
+        }
+    }
+
+    private void clearSelectionIfCurrent(PendingNodeSelection selection) {
+        synchronized (this) {
+            if (pendingSelection == selection) {
+                pendingSelection = null;
+            }
+        }
+    }
+
+    private void clearPendingSelection() {
+        synchronized (this) {
+            pendingSelection = null;
+        }
     }
 
     private void runApi(ApiTask task) {
@@ -698,6 +751,18 @@ public class MeFrpCommandHandler {
         void run() throws Exception;
     }
 
-    private record PendingNodeSelection(List<Node> nodes, Map<Integer, NodeStatus> nodeStatuses, int port, Proxy oldProxy) {
+    private static final class PendingNodeSelection {
+        private final List<Node> nodes;
+        private final Map<Integer, NodeStatus> nodeStatuses;
+        private final int port;
+        private final Proxy oldProxy;
+        private volatile boolean inFlight;
+
+        private PendingNodeSelection(List<Node> nodes, Map<Integer, NodeStatus> nodeStatuses, int port, Proxy oldProxy) {
+            this.nodes = nodes;
+            this.nodeStatuses = nodeStatuses;
+            this.port = port;
+            this.oldProxy = oldProxy;
+        }
     }
 }
