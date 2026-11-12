@@ -16,8 +16,23 @@ repositories {
     mavenCentral()
 }
 
+sourceSets {
+    regression {
+        java.srcDir 'src/regression/java'
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+
 dependencies {
     api 'com.google.code.gson:gson:2.11.0'
+    regressionImplementation 'com.google.code.gson:gson:2.8.0'
+}
+
+tasks.register('regressionTest', JavaExec) {
+    dependsOn tasks.named('regressionClasses')
+    classpath = sourceSets.regression.runtimeClasspath
+    mainClass = 'com.mefrp.mc.ConfigRegressionTest'
 }
 
 processResources {

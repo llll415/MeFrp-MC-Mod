@@ -57,7 +57,8 @@ public class MeFrpNeoForge {
                 .then(literal("userinfo").executes(context -> run(context.getSource(), withSource, "userinfo")))
                 .then(literal("sign").executes(context -> run(context.getSource(), withSource, "sign")))
                 .then(literal("online").then(literal("on").executes(context -> run(context.getSource(), withSource, "online", "on"))).then(literal("off").executes(context -> run(context.getSource(), withSource, "online", "off"))))
-                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), withSource, "select", String.valueOf(IntegerArgumentType.getInteger(context, "index")))))));
+                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), withSource, "select", String.valueOf(IntegerArgumentType.getInteger(context, "index"))))))
+                .then(literal("config").then(literal("reset").executes(context -> run(context.getSource(), withSource, "config", "reset")))));
     }
 
     private static int run(CommandSourceStack source, boolean withSource, String... args) {

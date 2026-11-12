@@ -59,7 +59,8 @@ public class MeFrpFabricClient implements ClientModInitializer {
                 .then(literal("userinfo").executes(context -> run("userinfo")))
                 .then(literal("sign").executes(context -> run("sign")))
                 .then(literal("online").then(literal("on").executes(context -> run("online", "on"))).then(literal("off").executes(context -> run("online", "off"))))
-                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run("select", String.valueOf(IntegerArgumentType.getInteger(context, "index")))))));
+                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run("select", String.valueOf(IntegerArgumentType.getInteger(context, "index"))))))
+                .then(literal("config").then(literal("reset").executes(context -> run("config", "reset")))));
     }
 
     private int run(String... args) {

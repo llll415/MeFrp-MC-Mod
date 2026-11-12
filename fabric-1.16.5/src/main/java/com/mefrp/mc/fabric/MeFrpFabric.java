@@ -41,7 +41,8 @@ public class MeFrpFabric implements ModInitializer {
                 .then(literal("userinfo").executes(context -> run(context.getSource(), "userinfo")))
                 .then(literal("sign").executes(context -> run(context.getSource(), "sign")))
                 .then(literal("online").then(literal("on").executes(context -> run(context.getSource(), "online", "on"))).then(literal("off").executes(context -> run(context.getSource(), "online", "off"))))
-                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), "select", String.valueOf(IntegerArgumentType.getInteger(context, "index")))))));
+                .then(literal("select").then(argument("index", IntegerArgumentType.integer(1)).executes(context -> run(context.getSource(), "select", String.valueOf(IntegerArgumentType.getInteger(context, "index"))))))
+                .then(literal("config").then(literal("reset").executes(context -> run(context.getSource(), "config", "reset")))));
     }
 
     private int run(CommandSourceStack source, String... args) {

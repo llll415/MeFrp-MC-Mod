@@ -1,6 +1,7 @@
 package com.mefrp.mc.command;
 
 import com.mefrp.mc.MeFrpConfig;
+import com.mefrp.mc.MeFrpMessages;
 import com.mefrp.mc.api.ApiException;
 import com.mefrp.mc.api.MeFrpApiClient;
 import com.mefrp.mc.api.model.Node;
@@ -31,6 +32,7 @@ public class MeFrpCommandHandler {
     private ExecutorService executor;
     private long sessionGeneration;
     private boolean sessionActive = true;
+    private int pendingOperations;
     private PendingNodeSelection pendingSelection;
 
     public MeFrpCommandHandler(MeFrpPlatform platform, MefrpcManager mefrpcManager) {
@@ -62,9 +64,12 @@ public class MeFrpCommandHandler {
             sessionGeneration++;
             previous = executor;
             executor = null;
-        }
-        if (previous != null) {
-            previous.shutdownNow();
+            if (previous != null) {
+                int dropped = previous.shutdownNow().size();
+                if (dropped > 0) {
+                    pendingOperations = Math.max(0, pendingOperations - dropped);
+                }
+            }
         }
         clearPendingSelection();
     }
@@ -74,7 +79,11 @@ public class MeFrpCommandHandler {
             showClientDisabled();
             return;
         }
-        reportConfigLoadFailure(MeFrpConfig.getInstance());
+        if (args.length >= 2 && "config".equalsIgnoreCase(args[0]) && "reset".equalsIgnoreCase(args[1])) {
+            handleConfigReset();
+            return;
+        }
+        reportConfigNotifications(MeFrpConfig.getInstance());
         if (args.length == 0 || "help".equalsIgnoreCase(args[0])) {
             showHelp();
             return;
@@ -89,6 +98,7 @@ public class MeFrpCommandHandler {
             case "sign" -> runApi(generation -> handleSign(generation));
             case "online" -> handleOnline(args);
             case "select" -> handleSelect(args);
+            case "config" -> handleConfig(args);
             default -> platform.sendMessage("[MeFrp] 未知命令。输入 /mefrp help 查看可用命令。");
         }
     }
@@ -100,7 +110,7 @@ public class MeFrpCommandHandler {
     public void showJoinHelp() {
         platform.sendMessage("[MeFrp] MeFrp-MC-Mod");
         MeFrpConfig config = MeFrpConfig.getInstance();
-        reportConfigLoadFailure(config);
+        reportConfigNotifications(config);
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 当前没有绑定访问密钥。");
             platform.sendMessage("[MeFrp] 请前往 MeFrp 官网用户中心获取访问密钥。");
@@ -135,6 +145,7 @@ public class MeFrpCommandHandler {
         platform.sendMessage("[MeFrp] /mefrp userinfo - 查看账号、流量、限速和签到状态");
         platform.sendMessage("[MeFrp] /mefrp sign - 查看签到说明");
         platform.sendMessage("[MeFrp] /mefrp node - 选择节点并启动/切换隧道");
+        platform.sendMessage(MeFrpMessages.HELP_RESET);
         if (shouldExposeOnlineModeCommand()) {
             platform.sendMessage("[MeFrp] /mefrp online off - 关闭正版验证；/mefrp online on - 开启正版验证");
         }
@@ -162,11 +173,40 @@ public class MeFrpCommandHandler {
             platform.sendMessage("[MeFrp] 访问令牌可在 MeFrp 官网个人中心获取。");
             return;
         }
-        if (!MeFrpConfig.getInstance().setToken(args[1].trim())) {
-            platform.sendMessage("[MeFrp] 访问令牌保存失败，请检查配置目录是否可写。");
+        MeFrpConfig.SaveResult result = MeFrpConfig.getInstance().setToken(args[1].trim());
+        if (result == MeFrpConfig.SaveResult.CONFIG_READ_ONLY) {
+            platform.sendMessage(MeFrpMessages.CONFIG_READ_FAILED);
+            platform.sendMessage(MeFrpMessages.RESET_HINT);
+            return;
+        }
+        if (result == MeFrpConfig.SaveResult.MACHINE_ID_UNAVAILABLE) {
+            platform.sendMessage(MeFrpMessages.MACHINE_ID_UNAVAILABLE);
+            return;
+        }
+        if (result != MeFrpConfig.SaveResult.SUCCESS) {
+            platform.sendMessage(MeFrpMessages.TOKEN_SAVE_FAILED);
             return;
         }
         platform.sendMessage("[MeFrp] 访问令牌已保存。现在可以打开局域网后输入 /mefrp start 开始联机。");
+    }
+
+    private void handleConfig(String[] args) {
+        platform.sendMessage("[MeFrp] 未知命令。输入 /mefrp help 查看可用命令。");
+    }
+
+    private void handleConfigReset() {
+        synchronized (lifecycleLock) {
+            if (mefrpcManager.isBusy() || pendingOperations > 0) {
+                platform.sendMessage(MeFrpMessages.RESET_BUSY);
+                return;
+            }
+            if (!MeFrpConfig.reset()) {
+                platform.sendMessage(MeFrpMessages.RESET_FAILED);
+                return;
+            }
+            pendingSelection = null;
+        }
+        platform.sendMessage(MeFrpMessages.RESET_SUCCESS);
     }
 
     private void handleStart(String[] args) {
@@ -807,9 +847,9 @@ public class MeFrpCommandHandler {
         return new TunnelManager(new MeFrpApiClient(MeFrpConfig.getInstance().getToken()));
     }
 
-    private void reportConfigLoadFailure(MeFrpConfig config) {
-        if (config.consumeLoadFailure()) {
-            platform.sendMessage("[MeFrp] 配置读取失败，请检查 config/mefrp.json。");
+    private void reportConfigNotifications(MeFrpConfig config) {
+        for (String message : config.consumeNotifications()) {
+            platform.sendMessage(message);
         }
     }
 
@@ -871,15 +911,28 @@ public class MeFrpCommandHandler {
             }
             active = executor;
             generation = sessionGeneration;
+            pendingOperations++;
         }
         try {
             active.execute(() -> {
-                if (!isCurrentSession(generation)) {
-                    return;
+                try {
+                    if (isCurrentSession(generation)) {
+                        task.run(generation);
+                    }
+                } finally {
+                    finishOperation();
                 }
-                task.run(generation);
             });
         } catch (RejectedExecutionException ignored) {
+            finishOperation();
+        }
+    }
+
+    private void finishOperation() {
+        synchronized (lifecycleLock) {
+            if (pendingOperations > 0) {
+                pendingOperations--;
+            }
         }
     }
 

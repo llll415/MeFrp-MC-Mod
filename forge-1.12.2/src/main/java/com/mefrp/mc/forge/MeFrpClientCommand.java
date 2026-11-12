@@ -13,7 +13,7 @@ public class MeFrpClientCommand extends CommandBase {
 
     @Override
     public String getUsage(ICommandSender sender) {
-        return "/mefrp <help|token|start|stop|status|userinfo|sign|node|online|select>";
+        return "/mefrp <help|token|start|stop|status|userinfo|sign|node|online|select|config>";
     }
 
     @Override

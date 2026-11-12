@@ -16,6 +16,7 @@ public final class MeFrp {
     public static void init(MeFrpPlatform platform) {
         MeFrp.platform = platform;
         MeFrpConfig.init(platform.gameDirectory());
+        MeFrpConfig.prefetchMachineId();
         mefrpcManager = new MefrpcManager(platform);
         commandHandler = new MeFrpCommandHandler(platform, mefrpcManager);
         Runtime.getRuntime().addShutdownHook(new Thread(MeFrp::onShutdown, "MeFrp-MC-Mod shutdown"));

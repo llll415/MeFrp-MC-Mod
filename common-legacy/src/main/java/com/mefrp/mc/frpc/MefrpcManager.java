@@ -44,12 +44,22 @@ public class MefrpcManager {
     private long launchId;
     private volatile String startupFailure;
     private volatile boolean startupSuccess;
+    private volatile boolean starting;
 
     public MefrpcManager(MeFrpPlatform platform) {
         this.platform = platform;
     }
 
     public long start(String frpToken, int proxyId) throws IOException, InterruptedException {
+        starting = true;
+        try {
+            return startInternal(frpToken, proxyId);
+        } finally {
+            starting = false;
+        }
+    }
+
+    private long startInternal(String frpToken, int proxyId) throws IOException, InterruptedException {
         if (Thread.currentThread().isInterrupted()) {
             throw new InterruptedException();
         }
@@ -280,6 +290,14 @@ public class MefrpcManager {
         synchronized (stateLock) {
             return process != null && isAlive(process);
         }
+    }
+
+    public boolean isStarting() {
+        return starting;
+    }
+
+    public boolean isBusy() {
+        return starting || isRunning();
     }
 
     public ProcessStatus processStatus() {
