@@ -83,6 +83,7 @@ MeFrp-MC-Mod 可以在游戏内帮助玩家完成 MeFrp 联机流程：检测局
 
 - `/mefrp start` 会自动创建或复用名为 `Mefrp-MC-MOD` 的 TCP 隧道
 - `/mefrp sign` 不会直接调用签到接口；MeFrp 签到需要在官网完成人机验证
+- `/mefrp status` 中的内存为 mefrpc 进程的驻留内存（Windows 工作集，Linux/macOS RSS）
 - 如果安装了 `LanServerProperties` 或 `mcwifipnp`，请在这些 Mod 的界面里调整正版验证；MeFrp 仍然负责端口检测和隧道启动
 
 ## 账号信息
