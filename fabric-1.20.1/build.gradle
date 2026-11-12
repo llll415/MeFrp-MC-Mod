@@ -7,6 +7,7 @@ group = project.mod_group_id
 
 def mcVersion = '1.20.1'
 def fabricApiVersion = '0.92.6+1.20.1'
+def fabricVersionRange = '>=0.92.6'
 def fabricLoaderVersion = project.fabric_loader_version
 def minecraftVersionMin = '1.20.1'
 def minecraftVersionMax = '1.20.2'
@@ -42,7 +43,7 @@ processResources {
             mod_id: project.mod_id,
             mod_version: project.mod_version,
             fabric_loader_version_range: project.fabric_loader_version_range,
-            fabric_version_range: project.fabric_version_range,
+            fabric_version_range: fabricVersionRange,
             minecraft_version_min: minecraftVersionMin,
             minecraft_version_max: minecraftVersionMax,
             java_version: javaVersion
