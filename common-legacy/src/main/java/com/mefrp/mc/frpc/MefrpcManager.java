@@ -7,6 +7,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -31,7 +32,14 @@ public class MefrpcManager {
     private final MeFrpPlatform platform;
     private final Object stateLock = new Object();
     private final Object executableLock = new Object();
+    private final Object pidLock = new Object();
+    private static final Method PROCESS_PID_METHOD = lookupProcessPidMethod();
     private Process process;
+    private Process cachedPidProcess;
+    private long cachedPid = -1L;
+    private boolean cachedPidValid;
+    private Object cachedGetProcessIdFunction;
+    private boolean getProcessIdUnavailable;
     private final Deque<String> recentOutput = new ArrayDeque<String>();
     private long launchId;
     private volatile String startupFailure;
@@ -465,15 +473,131 @@ public class MefrpcManager {
         }
     }
 
-    private long currentPid(Process process) {
+    private static Method lookupProcessPidMethod() {
         try {
-            java.lang.reflect.Field field = process.getClass().getDeclaredField("pid");
+            return Process.class.getMethod("pid");
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private long currentPid(Process process) {
+        // Cache by Process identity; a restart creates a new Process and refreshes the pid.
+        synchronized (pidLock) {
+            if (cachedPidValid && cachedPidProcess == process) {
+                return cachedPid;
+            }
+        }
+        long pid = resolvePid(process);
+        if (pid > 0L) {
+            synchronized (pidLock) {
+                cachedPidProcess = process;
+                cachedPid = pid;
+                cachedPidValid = true;
+            }
+        }
+        return pid;
+    }
+
+    private long resolvePid(Process process) {
+        long pid = pidFromProcessMethod(process);
+        if (pid > 0L) {
+            return pid;
+        }
+        pid = pidFromProcessField(process);
+        if (pid > 0L) {
+            return pid;
+        }
+        return pidFromWindowsHandle(process);
+    }
+
+    private long pidFromProcessMethod(Process process) {
+        Method method = PROCESS_PID_METHOD;
+        if (method == null) {
+            return -1L;
+        }
+        try {
+            return positivePid(method.invoke(process));
+        } catch (Exception ignored) {
+            return -1L;
+        }
+    }
+
+    private long pidFromProcessField(Process process) {
+        try {
+            Field field = process.getClass().getDeclaredField("pid");
+            field.setAccessible(true);
+            return positivePid(field.get(process));
+        } catch (Exception ignored) {
+            return -1L;
+        } catch (LinkageError ignored) {
+            return -1L;
+        }
+    }
+
+    /**
+     * Java 8 on Windows exposes only the native process handle on ProcessImpl.
+     * JNA is shipped with the supported Minecraft versions, so call
+     * GetProcessId reflectively without adding a compile-time dependency.
+     */
+    private long pidFromWindowsHandle(Process process) {
+        try {
+            Field field = process.getClass().getDeclaredField("handle");
             field.setAccessible(true);
             Object value = field.get(process);
-            if (value instanceof Number) {
-                return ((Number) value).longValue();
+            if (!(value instanceof Number)) {
+                return -1L;
             }
+            long handle = ((Number) value).longValue();
+            if (handle == 0L) {
+                return -1L;
+            }
+            Object function = getProcessIdFunction();
+            if (function == null) {
+                return -1L;
+            }
+            Object pointer = Class.forName("com.sun.jna.Pointer")
+                    .getConstructor(long.class)
+                    .newInstance(Long.valueOf(handle));
+            Object pid = function.getClass()
+                    .getMethod("invokeInt", Object[].class)
+                    .invoke(function, (Object) new Object[]{pointer});
+            return positivePid(pid);
         } catch (Exception ignored) {
+            return -1L;
+        } catch (LinkageError ignored) {
+            return -1L;
+        }
+    }
+
+    private Object getProcessIdFunction() {
+        synchronized (pidLock) {
+            if (cachedGetProcessIdFunction != null) {
+                return cachedGetProcessIdFunction;
+            }
+            if (getProcessIdUnavailable) {
+                return null;
+            }
+            try {
+                Class<?> nativeLibraryClass = Class.forName("com.sun.jna.NativeLibrary");
+                Object kernel32 = nativeLibraryClass.getMethod("getInstance", String.class).invoke(null, "kernel32");
+                Object function = kernel32.getClass().getMethod("getFunction", String.class).invoke(kernel32, "GetProcessId");
+                cachedGetProcessIdFunction = function;
+                return function;
+            } catch (Exception ignored) {
+                getProcessIdUnavailable = true;
+                return null;
+            } catch (LinkageError ignored) {
+                getProcessIdUnavailable = true;
+                return null;
+            }
+        }
+    }
+
+    private long positivePid(Object value) {
+        if (value instanceof Number) {
+            long pid = ((Number) value).longValue();
+            return pid > 0L ? pid : -1L;
         }
         return -1L;
     }
