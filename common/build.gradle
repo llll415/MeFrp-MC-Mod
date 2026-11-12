@@ -17,3 +17,11 @@ tasks.withType(JavaCompile) {
 dependencies {
     api 'com.google.code.gson:gson:2.11.0'
 }
+
+processResources {
+    def versionProperties = [mod_version: project.mod_version]
+    inputs.properties versionProperties
+    filesMatching('mefrp-version.properties') {
+        expand versionProperties
+    }
+}
