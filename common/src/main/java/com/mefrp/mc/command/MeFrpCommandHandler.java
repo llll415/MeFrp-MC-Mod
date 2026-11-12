@@ -110,7 +110,14 @@ public class MeFrpCommandHandler {
     public void showJoinHelp() {
         platform.sendMessage("[MeFrp] MeFrp-MC-Mod");
         MeFrpConfig config = MeFrpConfig.getInstance();
-        reportConfigNotifications(config);
+        boolean tokenDecryptFailed = config.hasTokenDecryptFailed();
+        reportJoinNotifications(config);
+        if (tokenDecryptFailed) {
+            // The decrypt failure and reset hint already explain the state;
+            // showing the "not bound" guide as well would be misleading.
+            showExternalLanControllerHint();
+            return;
+        }
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 当前没有绑定访问密钥。");
             platform.sendMessage("[MeFrp] 请前往 MeFrp 官网用户中心获取访问密钥。");
@@ -849,6 +856,12 @@ public class MeFrpCommandHandler {
 
     private void reportConfigNotifications(MeFrpConfig config) {
         for (String message : config.consumeNotifications()) {
+            platform.sendMessage(message);
+        }
+    }
+
+    private void reportJoinNotifications(MeFrpConfig config) {
+        for (String message : config.consumeJoinNotifications()) {
             platform.sendMessage(message);
         }
     }

@@ -197,8 +197,7 @@ public class MeFrpConfig {
                 } catch (ConfigCryptoException e) {
                     token = "";
                     tokenDecryptFailed = true;
-                    notifications.add(MeFrpMessages.TOKEN_DECRYPT_FAILED);
-                    notifications.add(MeFrpMessages.RESET_HINT);
+                    notifications.addAll(tokenDecryptFailureNotifications());
                     return;
                 }
                 if (versionState == VersionState.OLDER) {
@@ -281,6 +280,11 @@ public class MeFrpConfig {
             this.tokenDecryptFailed = previousTokenDecryptFailed;
             return result;
         }
+        if (this.tokenDecryptFailed) {
+            // The queued decrypt guidance is obsolete once a new token is saved.
+            notifications.remove(MeFrpMessages.TOKEN_DECRYPT_FAILED);
+            notifications.remove(MeFrpMessages.RESET_HINT);
+        }
         this.loadFailed = false;
         this.tokenDecryptFailed = false;
         this.readOnlyConfig = false;
@@ -354,6 +358,32 @@ public class MeFrpConfig {
         List<String> copy = new ArrayList<>(notifications);
         notifications.clear();
         return copy;
+    }
+
+    /**
+     * Notifications for a world join. A failed token decryption is a persistent
+     * state, so its guidance is repeated on every join until a new token is
+     * saved or the config is reset. Everything else keeps one-shot semantics.
+     */
+    public synchronized List<String> consumeJoinNotifications() {
+        if (tokenDecryptFailed) {
+            // Drop the queued one-shot copy so the first join does not print the
+            // same guidance twice; the persistent state supplies it below.
+            notifications.clear();
+            return tokenDecryptFailureNotifications();
+        }
+        return consumeNotifications();
+    }
+
+    public boolean hasTokenDecryptFailed() {
+        return tokenDecryptFailed;
+    }
+
+    private static List<String> tokenDecryptFailureNotifications() {
+        List<String> messages = new ArrayList<>(2);
+        messages.add(MeFrpMessages.TOKEN_DECRYPT_FAILED);
+        messages.add(MeFrpMessages.RESET_HINT);
+        return messages;
     }
 
     private JsonObject readJson(File configFile) throws IOException, InvalidConfigException {

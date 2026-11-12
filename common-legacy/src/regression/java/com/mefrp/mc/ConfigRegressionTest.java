@@ -531,6 +531,138 @@ public final class ConfigRegressionTest {
             }
         });
 
+        run("join repeats decrypt guidance without the unbound guide", () -> {
+            Path dir = newTempDir();
+            try {
+                init(dir, machine("machine-A"));
+                check(MeFrpConfig.getInstance().setToken("secret-token") == MeFrpConfig.SaveResult.SUCCESS,
+                        "save token");
+                init(dir, machine("machine-B"));
+                TestPlatform platform = new TestPlatform(dir);
+                MeFrpCommandHandler handler = new MeFrpCommandHandler(platform,
+                        new FakeMefrpcManager(platform, false));
+
+                handler.showJoinHelp();
+                checkEquals(1, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "first join decrypt failure once");
+                checkEquals(1, count(platform.messages, MeFrpMessages.RESET_HINT),
+                        "first join reset hint once");
+                check(!platform.messages.contains("[MeFrp] 当前没有绑定访问密钥。"),
+                        "first join must not claim the token is unbound");
+
+                platform.messages.clear();
+                handler.showJoinHelp();
+                checkEquals(1, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "second join decrypt failure once");
+                checkEquals(1, count(platform.messages, MeFrpMessages.RESET_HINT),
+                        "second join reset hint once");
+                check(!platform.messages.contains("[MeFrp] 当前没有绑定访问密钥。"),
+                        "second join must not claim the token is unbound");
+            } finally {
+                deleteRecursively(dir);
+            }
+        });
+
+        run("commands report decrypt guidance only once", () -> {
+            Path dir = newTempDir();
+            try {
+                init(dir, machine("machine-A"));
+                check(MeFrpConfig.getInstance().setToken("secret-token") == MeFrpConfig.SaveResult.SUCCESS,
+                        "save token");
+                init(dir, machine("machine-B"));
+                TestPlatform platform = new TestPlatform(dir);
+                MeFrpCommandHandler handler = new MeFrpCommandHandler(platform,
+                        new FakeMefrpcManager(platform, false));
+
+                handler.handleCommand(new String[]{"help"});
+                checkEquals(1, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "first command decrypt failure once");
+                checkEquals(1, count(platform.messages, MeFrpMessages.RESET_HINT),
+                        "first command reset hint once");
+
+                platform.messages.clear();
+                handler.handleCommand(new String[]{"help"});
+                checkEquals(0, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "second command must not repeat decrypt guidance");
+                checkEquals(0, count(platform.messages, MeFrpMessages.RESET_HINT),
+                        "second command must not repeat reset hint");
+            } finally {
+                deleteRecursively(dir);
+            }
+        });
+
+        run("saving a new token clears the decrypt failure state", () -> {
+            Path dir = newTempDir();
+            try {
+                init(dir, machine("machine-A"));
+                check(MeFrpConfig.getInstance().setToken("secret-token") == MeFrpConfig.SaveResult.SUCCESS,
+                        "save token");
+                init(dir, machine("machine-B"));
+                MeFrpConfig config = MeFrpConfig.getInstance();
+                check(config.hasTokenDecryptFailed(), "decrypt failure before save");
+
+                check(config.setToken("new-token") == MeFrpConfig.SaveResult.SUCCESS, "save replacement");
+                check(!config.hasTokenDecryptFailed(), "decrypt failure cleared after save");
+                check(config.hasToken(), "replacement token usable");
+                check(config.consumeJoinNotifications().isEmpty(),
+                        "no decrypt guidance after a successful save");
+            } finally {
+                deleteRecursively(dir);
+            }
+        });
+
+        run("reset clears the decrypt failure state and restores the unbound guide", () -> {
+            Path dir = newTempDir();
+            try {
+                init(dir, machine("machine-A"));
+                check(MeFrpConfig.getInstance().setToken("secret-token") == MeFrpConfig.SaveResult.SUCCESS,
+                        "save token");
+                init(dir, machine("machine-B"));
+                TestPlatform platform = new TestPlatform(dir);
+                MeFrpCommandHandler handler = new MeFrpCommandHandler(platform,
+                        new FakeMefrpcManager(platform, false));
+
+                check(MeFrpConfig.reset(), "reset succeeds");
+                check(!MeFrpConfig.getInstance().hasTokenDecryptFailed(), "decrypt failure cleared");
+                handler.showJoinHelp();
+                checkEquals(0, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "no decrypt guidance after reset");
+                check(platform.messages.contains("[MeFrp] 当前没有绑定访问密钥。"),
+                        "unbound guide after reset");
+            } finally {
+                deleteRecursively(dir);
+            }
+        });
+
+        run("failed token save keeps the decrypt failure guidance", () -> {
+            Path dir = newTempDir();
+            try {
+                init(dir, machine("machine-A"));
+                check(MeFrpConfig.getInstance().setToken("secret-token") == MeFrpConfig.SaveResult.SUCCESS,
+                        "save token");
+                init(dir, machine("machine-B"));
+                MeFrpConfig config = MeFrpConfig.getInstance();
+                Files.createDirectory(configFile(dir).resolveSibling("mefrp.json.tmp"));
+
+                check(config.setToken("new-token") == MeFrpConfig.SaveResult.IO_FAILURE, "write failure");
+                check(config.hasTokenDecryptFailed(), "decrypt failure kept after a failed save");
+                check(!config.hasToken(), "token still unavailable");
+
+                TestPlatform platform = new TestPlatform(dir);
+                MeFrpCommandHandler handler = new MeFrpCommandHandler(platform,
+                        new FakeMefrpcManager(platform, false));
+                handler.showJoinHelp();
+                checkEquals(1, count(platform.messages, MeFrpMessages.TOKEN_DECRYPT_FAILED),
+                        "decrypt failure after a failed save");
+                checkEquals(1, count(platform.messages, MeFrpMessages.RESET_HINT),
+                        "reset hint after a failed save");
+                check(!platform.messages.contains("[MeFrp] 当前没有绑定访问密钥。"),
+                        "failed save must not fall back to the unbound guide");
+            } finally {
+                deleteRecursively(dir);
+            }
+        });
+
         System.out.println("[MeFrp] config regression: " + passed + " passed, " + failed + " failed");
         if (failed > 0) {
             throw new AssertionError(failed + " config regression test(s) failed");
@@ -653,6 +785,16 @@ public final class ConfigRegressionTest {
         if (Objects.equals(first, second)) {
             throw new AssertionError(message + " (both=" + first + ")");
         }
+    }
+
+    private static int count(List<String> messages, String expected) {
+        int total = 0;
+        for (String message : messages) {
+            if (Objects.equals(message, expected)) {
+                total++;
+            }
+        }
+        return total;
     }
 
     private interface Test {
