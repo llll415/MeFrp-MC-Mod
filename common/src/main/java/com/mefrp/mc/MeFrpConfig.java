@@ -23,28 +23,30 @@ import java.nio.file.StandardCopyOption;
 
 public class MeFrpConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static Path gameDirectory;
+    private static volatile Path gameDirectory;
 
-    private String token = "";
-    private String tunnelName = MeFrpConstants.TUNNEL_NAME;
+    private volatile String token = "";
+    private volatile String tunnelName = MeFrpConstants.TUNNEL_NAME;
     private volatile boolean loadFailed;
 
     private static MeFrpConfig instance;
 
-    public static void init(Path gameDirectory) {
+    public static synchronized void init(Path gameDirectory) {
         MeFrpConfig.gameDirectory = gameDirectory;
         instance = null;
     }
 
-    public static MeFrpConfig getInstance() {
-        if (instance == null) {
-            instance = new MeFrpConfig();
-            instance.load();
+    public static synchronized MeFrpConfig getInstance() {
+        MeFrpConfig current = instance;
+        if (current == null) {
+            current = new MeFrpConfig();
+            current.load();
+            instance = current;
         }
-        return instance;
+        return current;
     }
 
-    public void load() {
+    public synchronized void load() {
         loadFailed = false;
         File configFile = getConfigFile();
         if (!configFile.exists()) {
@@ -56,7 +58,7 @@ public class MeFrpConfig {
 
         try (Reader reader = Files.newBufferedReader(configFile.toPath(), StandardCharsets.UTF_8)) {
             JsonReader jsonReader = new JsonReader(reader);
-            JsonElement root = JsonParser.parseReader(jsonReader);
+            JsonElement root = new JsonParser().parse(jsonReader);
             if (root == null || !root.isJsonObject() || jsonReader.peek() != JsonToken.END_DOCUMENT) {
                 markLoadFailed(null);
                 return;
@@ -81,7 +83,7 @@ public class MeFrpConfig {
         }
     }
 
-    public boolean save() {
+    public synchronized boolean save() {
         File configFile = getConfigFile();
         File parent = configFile.getParentFile();
         if (parent == null || (!parent.isDirectory() && !parent.mkdirs() && !parent.isDirectory())) {
@@ -116,11 +118,16 @@ public class MeFrpConfig {
         return token;
     }
 
-    public boolean setToken(String token) {
+    public synchronized boolean setToken(String token) {
         String previous = this.token;
         this.token = token;
-        if (save()) {
-            return true;
+        try {
+            if (save()) {
+                return true;
+            }
+        } catch (RuntimeException e) {
+            this.token = previous;
+            throw e;
         }
         this.token = previous;
         return false;

@@ -11,7 +11,6 @@ import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.loading.FMLEnvironment;
-import net.neoforged.neoforge.client.event.ClientChatReceivedEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
@@ -82,15 +81,11 @@ public class MeFrpNeoForge {
     @EventBusSubscriber(modid = "mefrpmc", value = Dist.CLIENT)
     public static class ClientEvents {
         private static boolean playerWasPresent;
+        private static boolean lanWasPublished;
 
         @SubscribeEvent
         public static void registerClientCommands(RegisterClientCommandsEvent event) {
             registerCommand(event.getDispatcher(), false);
-        }
-
-        @SubscribeEvent
-        public static void onChat(ClientChatReceivedEvent event) {
-            MeFrp.onChatMessage(event.getMessage().getString());
         }
 
         @SubscribeEvent
@@ -100,6 +95,13 @@ public class MeFrpNeoForge {
                 Minecraft.getInstance().execute(MeFrp::onPlayerReady);
             }
             playerWasPresent = playerPresent;
+
+            boolean lanPublished = Minecraft.getInstance().getSingleplayerServer() != null
+                    && Minecraft.getInstance().getSingleplayerServer().isPublished();
+            if (lanPublished && !lanWasPublished) {
+                MeFrp.onLanOpened();
+            }
+            lanWasPublished = lanPublished;
         }
     }
 }

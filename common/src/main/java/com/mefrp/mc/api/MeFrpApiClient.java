@@ -23,7 +23,9 @@ import java.util.List;
 public class MeFrpApiClient {
     private static final Gson GSON = new Gson();
     private static final int MAX_ATTEMPTS = 3;
-    private final HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+    private static final HttpClient CLIENT = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(10))
+            .build();
     private final String token;
 
     public MeFrpApiClient(String token) {
@@ -146,8 +148,16 @@ public class MeFrpApiClient {
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws ApiException {
+        boolean retryableMethod = "GET".equals(method);
+        int maxAttempts = retryableMethod ? MAX_ATTEMPTS : 1;
         ApiException last = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        int attemptsMade = 0;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new ApiException("请求被中断");
+            }
+            attemptsMade = attempt;
+            boolean retryable = false;
             try {
                 HttpRequest.Builder builder = HttpRequest.newBuilder()
                         .uri(URI.create(MeFrpConstants.API_BASE_URL + path))
@@ -161,50 +171,101 @@ public class MeFrpApiClient {
                     builder.method(method, HttpRequest.BodyPublishers.ofString(GSON.toJson(body)));
                 }
 
-                HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+                HttpResponse<String> response = CLIENT.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new ApiException("请求被中断");
+                }
+                int statusCode = response.statusCode();
                 String text = response.body() == null ? "" : response.body().trim();
-                if (text.startsWith("<")) {
+                boolean html = text.startsWith("<");
+                JsonObject root = html || text.isEmpty() ? null : parseObject(text);
+                if (statusCode < 200 || statusCode >= 300) {
+                    String message = html
+                            ? "API 可能被 CDN/WAF 拦截，请稍后再试"
+                            : apiErrorMessage(statusCode, root);
+                    if (isRetryableStatus(statusCode)) {
+                        throw new RetryableApiException(message);
+                    }
+                    throw new ApiException(message);
+                }
+                if (html) {
                     throw new ApiException("API 可能被 CDN/WAF 拦截，请稍后再试");
                 }
-                JsonObject root = GSON.fromJson(text, JsonObject.class);
-                if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    throw new ApiException(apiErrorMessage(response.statusCode(), root));
+                if (root == null) {
+                    throw new ApiException("API 调用失败");
                 }
                 if (root.has("code") && root.get("code").getAsInt() != 200) {
                     throw new ApiException(apiErrorMessage(root.get("code").getAsInt(), root));
                 }
                 return root;
-            } catch (IOException | InterruptedException | RuntimeException e) {
-                if (e instanceof InterruptedException) {
-                    Thread.currentThread().interrupt();
-                }
-                last = new ApiException("网络连接失败", e);
-            } catch (ApiException e) {
-                last = e;
-            }
-
-            if (attempt < MAX_ATTEMPTS) {
-                try {
-                    Thread.sleep(1000L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ApiException("请求被中断", e);
+            } catch (IOException e) {
+                if (Thread.currentThread().isInterrupted()) {
                     throw new ApiException("请求被中断", e);
                 }
+                last = new ApiException("网络连接失败", e);
+                retryable = true;
+            } catch (RetryableApiException e) {
+                last = e;
+                retryable = true;
+            } catch (ApiException e) {
+                last = e;
+            } catch (RuntimeException e) {
+                last = new ApiException("API 调用失败", e);
+            }
+
+            if (!retryable || attempt >= maxAttempts) {
+                break;
+            }
+            try {
+                Thread.sleep(1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ApiException("请求被中断", e);
             }
         }
-        throw new ApiException(last == null ? "API 调用失败" : last.getMessage() + "（已重试2次）", last);
+        String message = last == null ? "API 调用失败" : last.getMessage();
+        if (attemptsMade == MAX_ATTEMPTS) {
+            message += "（已重试" + (MAX_ATTEMPTS - 1) + "次）";
+        }
+        throw new ApiException(message, last);
+    }
+
+    private JsonObject parseObject(String text) {
+        try {
+            return GSON.fromJson(text, JsonObject.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private boolean isRetryableStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500;
     }
 
     private String apiErrorMessage(int code, JsonObject root) {
         if (root != null && root.has("message") && !root.get("message").isJsonNull()) {
-            String message = root.get("message").getAsString();
-            if (message != null && !message.isBlank()) {
-                return message;
+            JsonElement messageElement = root.get("message");
+            if (messageElement.isJsonPrimitive()) {
+                String message = messageElement.getAsString();
+                if (message != null && !message.isBlank()) {
+                    return message;
+                }
             }
         }
         if (code == 401) {
             return "Token 无效或已过期";
         }
         return "HTTP " + code;
+    }
+
+    private static final class RetryableApiException extends ApiException {
+        private static final long serialVersionUID = 1L;
+
+        private RetryableApiException(String message) {
+            super(message);
+        }
     }
 }

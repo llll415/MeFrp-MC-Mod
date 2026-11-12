@@ -7,20 +7,27 @@ import com.mojang.brigadier.arguments.StringArgumentType;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.fabricmc.fabric.api.client.message.v1.ClientReceiveMessageEvents;
+import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
 import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
 
 public class MeFrpFabricClient implements ClientModInitializer {
+    private static boolean lanWasPublished;
+
     @Override
     public void onInitializeClient() {
         MeFrpFabricPlatform.setClientBridge(new MeFrpFabricClientBridge());
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> registerClientCommand(dispatcher));
-        ClientReceiveMessageEvents.GAME.register((message, overlay) -> MeFrp.onChatMessage(message.getString()));
-        ClientReceiveMessageEvents.CHAT.register((message, signedMessage, sender, params, receptionTimestamp) -> MeFrp.onChatMessage(message.getString()));
         ClientPlayConnectionEvents.JOIN.register((handler, sender, client) -> client.execute(MeFrp::onPlayerReady));
+        ClientTickEvents.END_CLIENT_TICK.register(client -> {
+            boolean lanPublished = client.getSingleplayerServer() != null && client.getSingleplayerServer().isPublished();
+            if (lanPublished && !lanWasPublished) {
+                MeFrp.onLanOpened();
+            }
+            lanWasPublished = lanPublished;
+        });
     }
 
     private void registerClientCommand(CommandDispatcher<FabricClientCommandSource> dispatcher) {

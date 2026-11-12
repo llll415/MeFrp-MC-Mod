@@ -7,22 +7,33 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
 
 public class MefrpcManager {
+    private static final long STARTUP_TIMEOUT_MILLIS = 8000L;
+    private static final long STARTUP_POLL_MILLIS = 250L;
+    private static final Pattern TUNNEL_READY_PATTERN = Pattern.compile("启动 \\[[^\\]]*\\] 隧道 \\[.*\\] 成功");
+
     private final MeFrpPlatform platform;
+    private final Object stateLock = new Object();
+    private final Object executableLock = new Object();
     private Process process;
     private final Deque<String> recentOutput = new ArrayDeque<String>();
+    private long launchId;
     private volatile String startupFailure;
     private volatile boolean startupSuccess;
 
@@ -30,10 +41,26 @@ public class MefrpcManager {
         this.platform = platform;
     }
 
-    public synchronized void start(String frpToken, int proxyId) throws IOException, InterruptedException {
-        stop();
+    public long start(String frpToken, int proxyId) throws IOException, InterruptedException {
+        if (Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException();
+        }
+        Process previous;
+        final long launch;
+        synchronized (stateLock) {
+            previous = process;
+            process = null;
+            launch = ++launchId;
+            recentOutput.clear();
+            startupFailure = null;
+            startupSuccess = false;
+        }
+        terminate(previous);
+
         Path executable = ensureExecutable();
-        recentOutput.clear();
+        if (isLaunchCancelled(launch) || Thread.currentThread().isInterrupted()) {
+            throw new InterruptedException();
+        }
 
         List<String> command = new ArrayList<String>();
         command.add(executable.toAbsolutePath().toString());
@@ -45,77 +72,217 @@ public class MefrpcManager {
         ProcessBuilder builder = new ProcessBuilder(command);
         builder.directory(executable.getParent().toFile());
         builder.redirectErrorStream(true);
-        startupFailure = null;
-        startupSuccess = false;
-        process = builder.start();
-        final Process started = process;
+        final Process started = builder.start();
+        synchronized (stateLock) {
+            if (launchId == launch) {
+                process = started;
+            }
+        }
+        if (isLaunchCancelled(launch)) {
+            terminate(started);
+            throw new InterruptedException();
+        }
+
         Thread reader = new Thread(new Runnable() {
             @Override
             public void run() {
-                readOutput(started.getInputStream());
+                readOutput(started, launch);
             }
         }, "MeFrp-MC-Mod mefrpc");
         reader.setDaemon(true);
         reader.start();
 
-        Thread.sleep(8000L);
-        if (!isAlive(process)) {
-            throw new IOException("mefrpc 启动失败: " + lastOutput());
+        boolean ready;
+        try {
+            ready = awaitStartup(started, launch);
+        } catch (InterruptedException e) {
+            discardStartedProcess(started);
+            throw e;
         }
-        if (startupFailure != null) {
-            stop();
-            throw new IOException(startupFailure);
+        if (!ready) {
+            final boolean cancelled = isLaunchCancelled(launch);
+            String failure;
+            synchronized (stateLock) {
+                failure = startupFailure;
+            }
+            discardStartedProcess(started);
+            if (cancelled) {
+                throw new InterruptedException();
+            }
+            if (failure != null) {
+                throw new IOException(failure);
+            }
+            throw new IOException("mefrpc 启动失败: " + lastOutput());
         }
 
         Thread monitor = new Thread(new Runnable() {
             @Override
             public void run() {
-                monitorProcess(started);
+                monitorProcess(started, launch);
             }
         }, "MeFrp-MC-Mod mefrpc monitor");
         monitor.setDaemon(true);
         monitor.start();
+        return launch;
     }
 
-    public synchronized void stop() {
-        if (process != null) {
-            Process stopping = process;
-            stopping.destroy();
-            try {
-                if (!stopping.waitFor(3, TimeUnit.SECONDS)) {
-                    stopping.destroy();
-                    stopping.waitFor(2, TimeUnit.SECONDS);
-                }
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                stopping.destroy();
-            }
+    public void stop() {
+        Process stopping;
+        synchronized (stateLock) {
+            launchId++;
+            stopping = process;
             process = null;
+            stateLock.notifyAll();
         }
-        killExtractedMefrpcProcesses();
+        terminate(stopping);
     }
 
-    private void killExtractedMefrpcProcesses() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        try {
-            if (os.contains("win")) {
-                new ProcessBuilder("taskkill", "/F", "/IM", "mefrpc.exe").redirectErrorStream(true).start().waitFor(3, TimeUnit.SECONDS);
-            } else {
-                new ProcessBuilder("pkill", "-f", "mefrpc").redirectErrorStream(true).start().waitFor(3, TimeUnit.SECONDS);
+    /**
+     * Stops the process only when it still belongs to the given launch. A stale
+     * task must not terminate a process that a newer launch already started.
+     */
+    public void stop(long launch) {
+        Process stopping;
+        synchronized (stateLock) {
+            if (launchId != launch) {
+                return;
             }
+            launchId++;
+            stopping = process;
+            process = null;
+            stateLock.notifyAll();
+        }
+        terminate(stopping);
+    }
+
+    private boolean awaitStartup(Process started, long launch) throws InterruptedException {
+        long deadline = System.currentTimeMillis() + STARTUP_TIMEOUT_MILLIS;
+        synchronized (stateLock) {
+            while (true) {
+                if (launchId != launch) {
+                    return false;
+                }
+                if (startupFailure != null) {
+                    return false;
+                }
+                if (startupSuccess) {
+                    return true;
+                }
+                if (!isAlive(started)) {
+                    return false;
+                }
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0L) {
+                    return false;
+                }
+                stateLock.wait(Math.min(remaining, STARTUP_POLL_MILLIS));
+            }
+        }
+    }
+
+    private boolean isLaunchCancelled(long launch) {
+        synchronized (stateLock) {
+            return launchId != launch;
+        }
+    }
+
+    private void discardStartedProcess(Process started) {
+        synchronized (stateLock) {
+            if (process == started) {
+                process = null;
+            }
+        }
+        terminate(started);
+    }
+
+    private void terminate(Process target) {
+        if (target == null) {
+            return;
+        }
+        List<Object> descendants = descendantsOf(target);
+        for (Object child : descendants) {
+            destroyHandle(child, false);
+        }
+        try {
+            target.destroy();
+        } catch (Exception ignored) {
+        }
+        boolean exited;
+        try {
+            exited = target.waitFor(3, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            exited = false;
+        }
+        for (Object child : descendants) {
+            if (isHandleAlive(child)) {
+                destroyHandle(child, true);
+            }
+        }
+        if (exited) {
+            return;
+        }
+        try {
+            target.destroyForcibly();
+        } catch (Exception ignored) {
+        }
+        try {
+            target.waitFor(2, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private List<Object> descendantsOf(Process target) {
+        try {
+            Object stream = Process.class.getMethod("descendants").invoke(target);
+            if (stream == null) {
+                return Collections.emptyList();
+            }
+            Method iteratorMethod = Class.forName("java.util.stream.Stream").getMethod("iterator");
+            Iterator<?> iterator = (Iterator<?>) iteratorMethod.invoke(stream);
+            List<Object> result = new ArrayList<Object>();
+            while (iterator.hasNext()) {
+                result.add(iterator.next());
+            }
+            return result;
+        } catch (Exception ignored) {
+            return Collections.emptyList();
+        }
+    }
+
+    private void destroyHandle(Object handle, boolean force) {
+        try {
+            Method method = Class.forName("java.lang.ProcessHandle").getMethod(force ? "destroyForcibly" : "destroy");
+            method.invoke(handle);
         } catch (Exception ignored) {
         }
     }
 
-    public synchronized boolean isRunning() {
-        return process != null && isAlive(process);
+    private boolean isHandleAlive(Object handle) {
+        try {
+            Object result = Class.forName("java.lang.ProcessHandle").getMethod("isAlive").invoke(handle);
+            return Boolean.TRUE.equals(result);
+        } catch (Exception ignored) {
+            return true;
+        }
     }
 
-    public synchronized ProcessStatus processStatus() {
-        if (process == null || !isAlive(process)) {
+    public boolean isRunning() {
+        synchronized (stateLock) {
+            return process != null && isAlive(process);
+        }
+    }
+
+    public ProcessStatus processStatus() {
+        Process current;
+        synchronized (stateLock) {
+            current = process;
+        }
+        if (current == null || !isAlive(current)) {
             return new ProcessStatus(false, -1L, -1L);
         }
-        long pid = currentPid(process);
+        long pid = currentPid(current);
         return new ProcessStatus(true, pid, queryMemoryBytes(pid));
     }
 
@@ -123,7 +290,13 @@ public class MefrpcManager {
         return startupSuccess;
     }
 
-    public synchronized String lastOutput() {
+    public String lastOutput() {
+        synchronized (stateLock) {
+            return lastOutputLocked();
+        }
+    }
+
+    private String lastOutputLocked() {
         if (recentOutput.isEmpty()) {
             return "无输出";
         }
@@ -138,34 +311,36 @@ public class MefrpcManager {
     }
 
     private Path ensureExecutable() throws IOException {
-        BinaryTarget target = detectTarget();
-        Path binDir = platform.gameDirectory().resolve("config").resolve("mefrp").resolve("bin");
-        Files.createDirectories(binDir);
-        Path executable = binDir.resolve(target.fileName);
-        Path versionMarker = binDir.resolve("mefrpc.version");
-        if (Files.exists(executable) && Files.size(executable) > 0 && markerMatches(versionMarker)) {
+        synchronized (executableLock) {
+            BinaryTarget target = detectTarget();
+            Path binDir = platform.gameDirectory().resolve("config").resolve("mefrp").resolve("bin");
+            Files.createDirectories(binDir);
+            Path executable = binDir.resolve(target.fileName);
+            Path versionMarker = binDir.resolve("mefrpc.version");
+            if (Files.exists(executable) && Files.size(executable) > 0 && markerMatches(versionMarker)) {
+                return executable;
+            }
+
+            InputStream input = MefrpcManager.class.getResourceAsStream(target.resourcePath());
+            if (input == null) {
+                throw new IOException("未找到内置 mefrpc: " + target.resourcePath());
+            }
+            try {
+                GZIPInputStream gzip = new GZIPInputStream(input);
+                try {
+                    Files.copy(gzip, executable, StandardCopyOption.REPLACE_EXISTING);
+                } finally {
+                    gzip.close();
+                }
+            } finally {
+                input.close();
+            }
+            if (!target.windows) {
+                executable.toFile().setExecutable(true, true);
+            }
+            Files.write(versionMarker, MeFrpConstants.MEFRPC_VERSION.getBytes(StandardCharsets.UTF_8));
             return executable;
         }
-
-        InputStream input = MefrpcManager.class.getResourceAsStream(target.resourcePath());
-        if (input == null) {
-            throw new IOException("未找到内置 mefrpc: " + target.resourcePath());
-        }
-        try {
-            GZIPInputStream gzip = new GZIPInputStream(input);
-            try {
-                Files.copy(gzip, executable, StandardCopyOption.REPLACE_EXISTING);
-            } finally {
-                gzip.close();
-            }
-        } finally {
-            input.close();
-        }
-        if (!target.windows) {
-            executable.toFile().setExecutable(true, true);
-        }
-        Files.write(versionMarker, MeFrpConstants.MEFRPC_VERSION.getBytes(StandardCharsets.UTF_8));
-        return executable;
     }
 
     private boolean markerMatches(Path versionMarker) {
@@ -181,7 +356,15 @@ public class MefrpcManager {
         String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
         boolean amd64 = arch.contains("amd64") || arch.contains("x86_64");
         boolean arm64 = arch.contains("aarch64") || arch.contains("arm64");
-        if (os.contains("win") && amd64) {
+        boolean mac = os.contains("mac") || os.contains("darwin") || os.contains("osx");
+        boolean windows = !mac && (os.contains("windows") || os.startsWith("win"));
+        if (mac && amd64) {
+            return new BinaryTarget("darwin_amd64.gz", "mefrpc", false);
+        }
+        if (mac && arm64) {
+            return new BinaryTarget("darwin_arm64.gz", "mefrpc", false);
+        }
+        if (windows && amd64) {
             return new BinaryTarget("windows_amd64.gz", "mefrpc.exe", true);
         }
         if (os.contains("linux") && amd64) {
@@ -190,34 +373,38 @@ public class MefrpcManager {
         if (os.contains("linux") && arm64) {
             return new BinaryTarget("linux_arm64.gz", "mefrpc", false);
         }
-        if ((os.contains("mac") || os.contains("darwin")) && amd64) {
-            return new BinaryTarget("darwin_amd64.gz", "mefrpc", false);
-        }
-        if ((os.contains("mac") || os.contains("darwin")) && arm64) {
-            return new BinaryTarget("darwin_arm64.gz", "mefrpc", false);
-        }
         throw new IOException("暂不支持当前系统: " + os + " " + arch);
     }
 
-    private void readOutput(InputStream inputStream) {
+    private void readOutput(Process owner, long launch) {
         try {
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = stripAnsi(line);
-                platform.logInfo("[MeFrp] [mefrpc] " + line);
-                if (isFailureLine(line)) {
-                    startupFailure = line;
-                }
-                if (isSuccessLine(line)) {
-                    startupSuccess = true;
-                }
-                synchronized (this) {
-                    recentOutput.addLast(line);
-                    while (recentOutput.size() > 5) {
-                        recentOutput.removeFirst();
+            BufferedReader reader = new BufferedReader(new InputStreamReader(owner.getInputStream(), StandardCharsets.UTF_8));
+            try {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    line = stripAnsi(line);
+                    platform.logInfo("[MeFrp] [mefrpc] " + line);
+                    synchronized (stateLock) {
+                        if (launchId != launch) {
+                            continue;
+                        }
+                        if (isFailureLine(line)) {
+                            if (startupFailure == null) {
+                                startupFailure = line;
+                            }
+                            startupSuccess = false;
+                        } else if (TUNNEL_READY_PATTERN.matcher(line).find() && startupFailure == null) {
+                            startupSuccess = true;
+                        }
+                        recentOutput.addLast(line);
+                        while (recentOutput.size() > 5) {
+                            recentOutput.removeFirst();
+                        }
+                        stateLock.notifyAll();
                     }
                 }
+            } finally {
+                reader.close();
             }
         } catch (IOException ignored) {
         }
@@ -228,25 +415,40 @@ public class MefrpcManager {
     }
 
     private boolean isFailureLine(String line) {
-        String lower = line.toLowerCase(Locale.ROOT);
-        return line.contains("失败") || line.contains("错误") || lower.contains("error") || lower.contains("failed");
+        if (TUNNEL_READY_PATTERN.matcher(line).find()) {
+            return false;
+        }
+        if (line.contains("登录节点失败")) {
+            return true;
+        }
+        if (line.contains("启动隧道 [") && line.contains("失败")) {
+            return true;
+        }
+        if (line.contains("配置失败")) {
+            return true;
+        }
+        return line.contains("未找到隧道")
+                || line.contains("proxyId 格式错误")
+                || line.contains("不支持的隧道类型")
+                || line.contains("无法解析隧道")
+                || line.contains("的角色应为")
+                || line.contains("解析配置文件失败");
     }
 
-    private boolean isSuccessLine(String line) {
-        String lower = line.toLowerCase(Locale.ROOT);
-        return line.contains("登录节点成功") || line.contains("注册成功") || (lower.contains("login") && lower.contains("success"));
-    }
-
-    private void monitorProcess(Process monitoredProcess) {
+    private void monitorProcess(Process monitoredProcess, long launch) {
         try {
             int exitCode = monitoredProcess.waitFor();
-            synchronized (this) {
-                if (process != monitoredProcess) {
+            String reason;
+            synchronized (stateLock) {
+                if (launchId != launch) {
                     return;
                 }
-                process = null;
+                if (process == monitoredProcess) {
+                    process = null;
+                }
+                reason = lastOutputLocked();
+                stateLock.notifyAll();
             }
-            String reason = lastOutput();
             platform.logWarn("[MeFrp] mefrpc exited with code " + exitCode + ": " + reason);
             platform.sendMessage("[MeFrp] mefrpc 已退出，退出码 " + exitCode + "，原因: " + reason);
         } catch (InterruptedException e) {

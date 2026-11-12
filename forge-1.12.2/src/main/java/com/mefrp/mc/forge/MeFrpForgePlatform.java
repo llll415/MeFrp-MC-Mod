@@ -240,6 +240,15 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
     }
 
     private TextFormatting messageColor(String message) {
+        if (message.contains("失败") || message.contains("错误") || message.contains("无效") || message.contains("未知命令") || message.contains("API 请求失败") || message.contains("操作失败")) {
+            return TextFormatting.RED;
+        }
+        if (message.contains("未检测") || message.contains("没有检测") || message.contains("不可用") || message.contains("停止未完成") || message.contains("仍显示在线") || message.contains("还没有") || message.contains("请先")) {
+            return TextFormatting.YELLOW;
+        }
+        if (message.contains("已保存") || message.contains("已启动") || message.contains("已停止") || message.contains("检测到") || message.contains("已开启") || message.contains("已关闭")) {
+            return TextFormatting.GREEN;
+        }
         if (message.contains("/mefrp")) {
             return TextFormatting.GOLD;
         }
@@ -247,6 +256,9 @@ public class MeFrpForgePlatform implements MeFrpPlatform {
     }
 
     private TextFormatting commandColor(String text) {
+        if (text.contains("[过载]")) {
+            return TextFormatting.RED;
+        }
         if (text.contains("[VIP]")) {
             return TextFormatting.GOLD;
         }

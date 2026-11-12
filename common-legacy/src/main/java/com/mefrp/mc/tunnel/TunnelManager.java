@@ -1,7 +1,6 @@
 package com.mefrp.mc.tunnel;
 
 import com.mefrp.mc.MeFrpConfig;
-import com.mefrp.mc.MeFrpConstants;
 import com.mefrp.mc.api.ApiException;
 import com.mefrp.mc.api.MeFrpApiClient;
 import com.mefrp.mc.api.model.Node;
@@ -71,14 +70,29 @@ public class TunnelManager {
 
     public void recreateManagedProxy(Proxy proxy, int localPort) throws ApiException {
         api.deleteProxy(proxy.proxyId);
-        api.createProxy(proxy.nodeId, MeFrpConstants.TUNNEL_NAME, localPort, proxy.remotePort);
+        createRecreatedProxy(proxy, localPort);
+    }
+
+    public void createRecreatedProxy(Proxy proxy, int localPort) throws ApiException {
+        api.createProxy(proxy.nodeId, recreatedProxyName(proxy), localPort, proxy.remotePort);
     }
 
     public Proxy createManagedProxy(Node node, int localPort) throws ApiException {
         int remotePort = chooseRemotePort(node.allowPort);
-        api.createProxy(node.nodeId, MeFrpConstants.TUNNEL_NAME, localPort, remotePort);
+        api.createProxy(node.nodeId, managedProxyName(), localPort, remotePort);
         ProxyList list = api.listProxies();
         return findManagedProxy(list).orElseThrow(() -> new ApiException("隧道创建成功但未能读取隧道信息"));
+    }
+
+    private String managedProxyName() {
+        return MeFrpConfig.getInstance().getTunnelName();
+    }
+
+    private String recreatedProxyName(Proxy proxy) {
+        if (proxy != null && proxy.proxyName != null && !proxy.proxyName.trim().isEmpty()) {
+            return proxy.proxyName;
+        }
+        return managedProxyName();
     }
 
     public String connectionAddress(Proxy proxy, ProxyList list) {

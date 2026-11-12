@@ -8,7 +8,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.command.CommandSource;
 import net.minecraftforge.client.event.ClientChatEvent;
 import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -87,6 +86,7 @@ public class MeFrpForge {
     @Mod.EventBusSubscriber(modid = "mefrpmc", value = Dist.CLIENT)
     public static class ClientEvents {
         private static boolean playerWasPresent;
+        private static boolean lanWasPublished;
 
         @SubscribeEvent
         public static void onClientCommand(ClientChatEvent event) {
@@ -98,11 +98,6 @@ public class MeFrpForge {
             String rest = message.length() == "/mefrp".length() ? "" : message.substring("/mefrp".length()).trim();
             String[] args = rest.isEmpty() ? new String[0] : rest.split("\\s+");
             MeFrp.commandHandler().handleCommand(args);
-        }
-
-        @SubscribeEvent
-        public static void onChat(ClientChatReceivedEvent event) {
-            MeFrp.onChatMessage(event.getMessage().getString());
         }
 
         @SubscribeEvent
@@ -120,6 +115,13 @@ public class MeFrpForge {
                 });
             }
             playerWasPresent = playerPresent;
+
+            boolean lanPublished = Minecraft.getInstance().getSingleplayerServer() != null
+                    && Minecraft.getInstance().getSingleplayerServer().isPublished();
+            if (lanPublished && !lanWasPublished) {
+                MeFrp.onLanOpened();
+            }
+            lanWasPublished = lanPublished;
         }
     }
 }

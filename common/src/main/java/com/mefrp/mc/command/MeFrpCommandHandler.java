@@ -21,26 +21,52 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 public class MeFrpCommandHandler {
     private final MeFrpPlatform platform;
     private final MefrpcManager mefrpcManager;
     private final PortDetector portDetector;
-    private final ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
-        Thread thread = new Thread(runnable, "MeFrp-MC-Mod");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final Object lifecycleLock = new Object();
+    private ExecutorService executor;
+    private long sessionGeneration;
+    private boolean sessionActive = true;
     private PendingNodeSelection pendingSelection;
 
     public MeFrpCommandHandler(MeFrpPlatform platform, MefrpcManager mefrpcManager) {
         this.platform = platform;
         this.mefrpcManager = mefrpcManager;
         this.portDetector = new PortDetector(platform);
+        this.executor = newExecutor();
     }
 
     public PortDetector portDetector() {
         return portDetector;
+    }
+
+    public void onSessionStart() {
+        synchronized (lifecycleLock) {
+            if (sessionActive && executor != null && !executor.isShutdown()) {
+                return;
+            }
+            sessionActive = true;
+            sessionGeneration++;
+            executor = newExecutor();
+        }
+    }
+
+    public void onSessionEnd() {
+        ExecutorService previous;
+        synchronized (lifecycleLock) {
+            sessionActive = false;
+            sessionGeneration++;
+            previous = executor;
+            executor = null;
+        }
+        if (previous != null) {
+            previous.shutdownNow();
+        }
+        clearPendingSelection();
     }
 
     public void handleCommand(String[] args) {
@@ -56,11 +82,11 @@ public class MeFrpCommandHandler {
         switch (args[0].toLowerCase()) {
             case "token" -> handleToken(args);
             case "start" -> handleStart(args);
-            case "stop" -> runApi(this::stopTunnel);
-            case "node" -> runApi(() -> beginNodeSwitch(null));
-            case "status" -> runApi(this::showStatus);
-            case "userinfo" -> runApi(this::showCurrentUserInfo);
-            case "sign" -> runApi(this::handleSign);
+            case "stop" -> runApi(generation -> stopTunnel(generation));
+            case "node" -> runApi(generation -> beginNodeSwitch(null, generation));
+            case "status" -> runApi(generation -> showStatus(generation));
+            case "userinfo" -> runApi(generation -> showCurrentUserInfo(generation));
+            case "sign" -> runApi(generation -> handleSign(generation));
             case "online" -> handleOnline(args);
             case "select" -> handleSelect(args);
             default -> platform.sendMessage("[MeFrp] 未知命令。输入 /mefrp help 查看可用命令。");
@@ -83,11 +109,17 @@ public class MeFrpCommandHandler {
             showExternalLanControllerHint();
             return;
         }
-        executor.execute(() -> {
+        submitSessionTask(generation -> {
             try {
                 UserInfo user = new MeFrpApiClient(config.getToken()).getUserInfo();
+                ensureSessionActive(generation);
                 showUserInfo(user);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (Exception e) {
+                if (!isCurrentSession(generation)) {
+                    return;
+                }
                 platform.sendMessage("[MeFrp] 无法获取账号信息: " + e.getMessage());
                 platform.sendMessage("[MeFrp] 输入 /mefrp help 查看使用方法。");
             }
@@ -152,7 +184,7 @@ public class MeFrpCommandHandler {
             }
         }
         Integer finalExplicitPort = explicitPort;
-        runApi(() -> startTunnel(finalExplicitPort));
+        runApi(generation -> startTunnel(finalExplicitPort, generation));
     }
 
     private void handleOnline(String[] args) {
@@ -209,16 +241,17 @@ public class MeFrpCommandHandler {
         }
         selection.inFlight = true;
         Node node = selection.nodes.get(index);
-        runApi(() -> {
+        runApi(generation -> {
             try {
-                createWithSelectedNode(selection, node);
+                createWithSelectedNode(selection, node, generation);
             } finally {
                 releaseSelection(selection);
             }
         });
     }
 
-    private void startTunnel(Integer explicitPort) throws ApiException {
+    private void startTunnel(Integer explicitPort, long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         MeFrpConfig config = MeFrpConfig.getInstance();
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 还没有设置访问令牌。");
@@ -235,9 +268,10 @@ public class MeFrpCommandHandler {
         }
         TunnelManager tunnels = tunnelManager();
         ProxyList list = tunnels.listProxies();
+        ensureSessionActive(generation);
         Optional<Proxy> existing = tunnels.findManagedProxy(list);
         if (existing.isEmpty()) {
-            showNodeSelection(tunnels.listAvailableNodes(), port.getAsInt(), null, "请选择一个在线节点来创建隧道");
+            showNodeSelection(tunnels.listAvailableNodes(), port.getAsInt(), null, "请选择一个在线节点来创建隧道", generation);
             return;
         }
         Proxy proxy = existing.get();
@@ -245,63 +279,92 @@ public class MeFrpCommandHandler {
         boolean nodeUsable = node != null && node.isOnline && !node.isDisabled && node.supportsTcp();
         if (!nodeUsable) {
             String reason = "当前隧道节点不可用，请重新选择节点";
-            showNodeSelection(tunnels.listAvailableNodes(), port.getAsInt(), proxy, reason);
+            showNodeSelection(tunnels.listAvailableNodes(), port.getAsInt(), proxy, reason, generation);
             return;
         }
         if (proxy.localPort != port.getAsInt()) {
+            ensureSessionActive(generation);
             platform.sendMessage("[MeFrp] 检测到本地端口变化，正在重建隧道并保留远程端口 " + proxy.remotePort);
-            tunnels.recreateManagedProxy(proxy, port.getAsInt());
+            tunnels.deleteProxy(proxy);
+            ensureSessionActive(generation);
+            tunnels.createRecreatedProxy(proxy, port.getAsInt());
+            ensureSessionActive(generation);
             list = tunnels.listProxies();
+            ensureSessionActive(generation);
             proxy = tunnels.findManagedProxy(list).orElse(proxy);
         }
         if (isTunnelAlreadyRunning(proxy, port.getAsInt())) {
             showAlreadyStarted(tunnels.connectionAddress(proxy, list));
             return;
         }
+        ensureSessionActive(generation);
         tunnels.enableProxy(proxy);
+        ensureSessionActive(generation);
         ProxyList refreshed = tunnels.listProxies();
+        ensureSessionActive(generation);
         Proxy enabled = tunnels.findManagedProxy(refreshed).orElse(proxy);
         try {
-            startMefrpcAndShow(tunnels, enabled, refreshed);
+            startMefrpcAndShow(tunnels, enabled, refreshed, generation);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
+            ensureSessionActive(generation);
             throw new ApiException(e.getMessage(), e);
         }
     }
 
-    private void stopTunnel() throws ApiException {
+    private void stopTunnel(long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         Proxy existing = currentProxyOrWarn();
         if (existing == null) {
             return;
         }
         TunnelManager tunnels = tunnelManager();
+        ensureSessionActive(generation);
         mefrpcManager.stop();
-        Proxy current = waitForOffline(tunnels, existing, 5000L);
+        ensureSessionActive(generation);
+        Proxy current = waitForOffline(tunnels, existing, 5000L, generation);
         if (current.isOnline) {
             try {
+                ensureSessionActive(generation);
                 platform.sendMessage("[MeFrp] 远端仍显示在线，正在强制下线。");
                 tunnels.kickProxy(current);
-                current = waitForOffline(tunnels, current, 5000L);
+                ensureSessionActive(generation);
+                current = waitForOffline(tunnels, current, 5000L, generation);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
+                ensureSessionActive(generation);
                 platform.sendMessage("[MeFrp] 强制下线失败: " + e.getMessage());
             }
         }
         try {
             current = refreshManagedProxy(tunnels, current);
+            ensureSessionActive(generation);
             if (current.isOnline) {
                 platform.sendMessage("[MeFrp] 停止未完成：远端仍显示在线。请稍等几秒后再次输入 /mefrp stop。");
                 return;
             }
             if (current.isDisabled) {
+                ensureSessionActive(generation);
                 platform.sendMessage("[MeFrp] 隧道被禁用，正在恢复启用状态。");
                 tunnels.enableProxy(current);
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
+            ensureSessionActive(generation);
             platform.sendMessage("[MeFrp] 恢复隧道启用状态失败: " + e.getMessage());
         }
+        ensureSessionActive(generation);
         platform.sendMessage("[MeFrp] 隧道已停止。好友将无法继续通过连接地址进入。");
     }
 
-    private void beginNodeSwitch(Integer portOverride) throws ApiException {
+    private void beginNodeSwitch(Integer portOverride, long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         MeFrpConfig config = MeFrpConfig.getInstance();
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 还没有设置访问令牌。");
@@ -318,13 +381,15 @@ public class MeFrpCommandHandler {
         }
         TunnelManager tunnels = tunnelManager();
         ProxyList list = tunnels.listProxies();
+        ensureSessionActive(generation);
         Proxy existing = tunnels.findManagedProxy(list).orElse(null);
         int port = detectedPort.getAsInt();
         String title = existing == null ? "请选择一个在线节点来启动隧道" : "请选择一个新的在线节点并启动隧道";
-        showNodeSelection(tunnels.listAvailableNodes(), port, existing, title);
+        showNodeSelection(tunnels.listAvailableNodes(), port, existing, title, generation);
     }
 
-    private void showCurrentUserInfo() throws ApiException {
+    private void showCurrentUserInfo(long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         MeFrpConfig config = MeFrpConfig.getInstance();
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 当前没有绑定访问密钥。");
@@ -332,10 +397,13 @@ public class MeFrpCommandHandler {
             platform.sendMessage("[MeFrp] 然后输入 /mefrp token <访问密钥> 完成绑定。");
             return;
         }
-        showUserInfo(new MeFrpApiClient(config.getToken()).getUserInfo());
+        UserInfo user = new MeFrpApiClient(config.getToken()).getUserInfo();
+        ensureSessionActive(generation);
+        showUserInfo(user);
     }
 
-    private void handleSign() throws ApiException {
+    private void handleSign(long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         MeFrpConfig config = MeFrpConfig.getInstance();
         if (!config.hasToken()) {
             platform.sendMessage("[MeFrp] 当前没有绑定访问密钥。");
@@ -348,7 +416,8 @@ public class MeFrpCommandHandler {
         platform.sendMessage("[MeFrp] 签到后可输入 /mefrp userinfo 刷新账号信息。");
     }
 
-    private void showStatus() throws ApiException {
+    private void showStatus(long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         MeFrpConfig config = MeFrpConfig.getInstance();
         platform.sendMessage("[MeFrp] ===== 当前状态 =====");
         platform.sendMessage("[MeFrp] 访问令牌: " + (config.hasToken() ? "已设置" : "未设置"));
@@ -358,6 +427,7 @@ public class MeFrpCommandHandler {
         }
         TunnelManager tunnels = tunnelManager();
         ProxyList list = tunnels.listProxies();
+        ensureSessionActive(generation);
         Optional<Proxy> proxy = tunnels.findManagedProxy(list);
         if (proxy.isEmpty()) {
             platform.sendMessage("[MeFrp] 隧道: 未创建。输入 /mefrp start 创建并启动。");
@@ -388,16 +458,19 @@ public class MeFrpCommandHandler {
         return proxy.get();
     }
 
-    private void showNodeSelection(List<Node> nodes, int port, Proxy oldProxy, String title) {
+    private void showNodeSelection(List<Node> nodes, int port, Proxy oldProxy, String title, long generation) throws InterruptedException {
+        ensureSessionActive(generation);
         List<Node> available = new ArrayList<>(nodes);
         if (available.isEmpty()) {
             clearPendingSelection();
             platform.sendMessage("[MeFrp] 没有可用在线节点，请稍后再试。");
             return;
         }
-        Map<Integer, NodeStatus> statuses = nodeStatusesById();
+        Map<Integer, NodeStatus> statuses = nodeStatusesById(generation);
+        ensureSessionActive(generation);
         PendingNodeSelection selection = new PendingNodeSelection(available, statuses, port, oldProxy);
         synchronized (this) {
+            ensureSessionActive(generation);
             pendingSelection = selection;
         }
         platform.sendMessage("[MeFrp] " + title + ":");
@@ -412,13 +485,14 @@ public class MeFrpCommandHandler {
         platform.sendMessage("[MeFrp] 也可以输入 /mefrp select <编号> 选择节点。");
     }
 
-    private Map<Integer, NodeStatus> nodeStatusesById() {
+    private Map<Integer, NodeStatus> nodeStatusesById(long generation) throws InterruptedException {
         Map<Integer, NodeStatus> result = new HashMap<>();
         try {
             for (NodeStatus status : new MeFrpApiClient(MeFrpConfig.getInstance().getToken()).listNodeStatus()) {
                 result.put(status.nodeId, status);
             }
         } catch (Exception e) {
+            ensureSessionActive(generation);
             platform.logWarn("[MeFrp] failed to load node status: " + e.getMessage());
         }
         return result;
@@ -435,7 +509,8 @@ public class MeFrpCommandHandler {
         return status != null && status.loadPercent > 90;
     }
 
-    private void createWithSelectedNode(PendingNodeSelection selection, Node node) throws ApiException {
+    private void createWithSelectedNode(PendingNodeSelection selection, Node node, long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         NodeStatus status = selection.nodeStatuses.get(node.nodeId);
         if (isOverloaded(status)) {
             platform.sendMessage("[MeFrp] 该节点当前负载 " + loadText(status) + "，已过载。");
@@ -444,6 +519,7 @@ public class MeFrpCommandHandler {
         }
         if (node.isVip()) {
             UserInfo user = new MeFrpApiClient(MeFrpConfig.getInstance().getToken()).getUserInfo();
+            ensureSessionActive(generation);
             if (!user.canUseVipNodes()) {
                 platform.sendMessage("[MeFrp] 该节点为 VIP 专属节点。");
                 platform.sendMessage("[MeFrp] 当前账号身份: " + blankFallback(user.friendlyGroup, blankFallback(user.group, "未知")));
@@ -451,24 +527,36 @@ public class MeFrpCommandHandler {
                 return;
             }
         }
+        ensureSessionActive(generation);
         clearSelectionIfCurrent(selection);
         TunnelManager tunnels = tunnelManager();
         if (selection.oldProxy != null) {
+            ensureSessionActive(generation);
             tunnels.deleteProxy(selection.oldProxy);
         }
+        ensureSessionActive(generation);
         Proxy created = tunnels.createManagedProxy(node, selection.port);
+        ensureSessionActive(generation);
         tunnels.enableProxy(created);
+        ensureSessionActive(generation);
         ProxyList refreshed = tunnels.listProxies();
+        ensureSessionActive(generation);
         Proxy current = tunnels.findManagedProxy(refreshed).orElse(created);
         try {
-            startMefrpcAndShow(tunnels, current, refreshed);
+            startMefrpcAndShow(tunnels, current, refreshed, generation);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
+            ensureSessionActive(generation);
             throw new ApiException(e.getMessage(), e);
         }
     }
 
-    private void startMefrpcAndShow(TunnelManager tunnels, Proxy proxy, ProxyList list) throws Exception {
+    private void startMefrpcAndShow(TunnelManager tunnels, Proxy proxy, ProxyList list, long generation) throws Exception {
+        ensureSessionActive(generation);
         ProxyList latest = tunnels.listProxies();
+        ensureSessionActive(generation);
         proxy = tunnels.findManagedProxy(latest).orElse(proxy);
         list = latest;
         String address = tunnels.connectionAddress(proxy, list);
@@ -476,84 +564,131 @@ public class MeFrpCommandHandler {
             throw new ApiException("无法获取节点连接地址，请尝试切换节点");
         }
         String frpToken = new MeFrpApiClient(MeFrpConfig.getInstance().getToken()).getFrpToken();
+        ensureSessionActive(generation);
         mefrpcManager.stop();
-        proxy = prepareProxyForStart(tunnels, proxy);
+        ensureSessionActive(generation);
+        proxy = prepareProxyForStart(tunnels, proxy, generation);
         try {
+            ensureSessionActive(generation);
             platform.sendMessage("[MeFrp] 正在启用隧道...");
             tunnels.enableProxy(proxy);
+            ensureSessionActive(generation);
             Thread.sleep(1200L);
+            ensureSessionActive(generation);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
+            ensureSessionActive(generation);
             if (!isForbiddenFailure(e.getMessage())) {
                 throw new ApiException("启用隧道失败: " + e.getMessage(), e);
             }
             platform.sendMessage("[MeFrp] 启用隧道被拒绝，正在清理旧连接后重试...");
             try {
+                ensureSessionActive(generation);
                 tunnels.kickProxy(proxy);
+                ensureSessionActive(generation);
                 Thread.sleep(1000L);
+                ensureSessionActive(generation);
                 tunnels.enableProxy(proxy);
+                ensureSessionActive(generation);
                 Thread.sleep(1200L);
+                ensureSessionActive(generation);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
             } catch (Exception retryError) {
+                ensureSessionActive(generation);
                 throw new ApiException("启用隧道重试失败: " + retryError.getMessage(), retryError);
             }
         }
         try {
+            ensureSessionActive(generation);
             platform.sendMessage("[MeFrp] 正在启动 mefrpc...");
-            mefrpcManager.start(frpToken, proxy.proxyId);
+            long launch = mefrpcManager.start(frpToken, proxy.proxyId);
+            ensureStartedSession(generation, launch);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw e;
         } catch (Exception e) {
+            ensureSessionActive(generation);
             if (!isAlreadyOnlineFailure(e.getMessage())) {
                 throw new ApiException("mefrpc 启动失败: " + e.getMessage(), e);
             }
             platform.sendMessage("[MeFrp] mefrpc 提示隧道当前在线，正在清理旧连接后重试...");
             try {
+                ensureSessionActive(generation);
                 tunnels.kickProxy(proxy);
+                ensureSessionActive(generation);
                 Thread.sleep(1000L);
+                ensureSessionActive(generation);
                 tunnels.enableProxy(proxy);
+                ensureSessionActive(generation);
                 Thread.sleep(1200L);
-                mefrpcManager.start(frpToken, proxy.proxyId);
+                ensureSessionActive(generation);
+                long retryLaunch = mefrpcManager.start(frpToken, proxy.proxyId);
+                ensureStartedSession(generation, retryLaunch);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw interrupted;
             } catch (Exception retryError) {
+                ensureSessionActive(generation);
                 throw new ApiException("mefrpc 重试启动失败: " + retryError.getMessage(), retryError);
             }
         }
+        ensureSessionActive(generation);
         showStarted(address);
     }
 
-    private Proxy prepareProxyForStart(TunnelManager tunnels, Proxy proxy) throws ApiException {
+    private Proxy prepareProxyForStart(TunnelManager tunnels, Proxy proxy, long generation) throws ApiException, InterruptedException {
+        ensureSessionActive(generation);
         Proxy current = refreshManagedProxy(tunnels, proxy);
+        ensureSessionActive(generation);
         if (current.isOnline) {
             try {
+                ensureSessionActive(generation);
                 platform.sendMessage("[MeFrp] 远端仍显示在线，正在清理旧连接...");
                 tunnels.kickProxy(current);
-                current = waitForOffline(tunnels, current, 5000L);
+                ensureSessionActive(generation);
+                current = waitForOffline(tunnels, current, 5000L, generation);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw e;
             } catch (Exception e) {
+                ensureSessionActive(generation);
                 platform.sendMessage("[MeFrp] 清理旧连接失败，将继续尝试启动: " + e.getMessage());
             }
         }
         current = refreshManagedProxy(tunnels, current);
+        ensureSessionActive(generation);
         if (current.isDisabled) {
+            ensureSessionActive(generation);
             tunnels.enableProxy(current);
-            try {
-                Thread.sleep(1200L);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
+            Thread.sleep(1200L);
+            ensureSessionActive(generation);
             current = refreshManagedProxy(tunnels, current);
+            ensureSessionActive(generation);
         }
         return current;
     }
 
-    private Proxy waitForOffline(TunnelManager tunnels, Proxy fallback, long timeoutMillis) {
+    private Proxy waitForOffline(TunnelManager tunnels, Proxy fallback, long timeoutMillis, long generation) throws InterruptedException {
         long deadline = System.currentTimeMillis() + timeoutMillis;
         Proxy current = fallback;
         while (System.currentTimeMillis() < deadline) {
+            ensureSessionActive(generation);
             try {
                 current = refreshManagedProxy(tunnels, current);
-                if (!current.isOnline) {
-                    return current;
-                }
-                Thread.sleep(500L);
-            } catch (Exception e) {
+            } catch (ApiException e) {
+                ensureSessionActive(generation);
                 return current;
             }
+            ensureSessionActive(generation);
+            if (!current.isOnline) {
+                return current;
+            }
+            Thread.sleep(500L);
+            ensureSessionActive(generation);
         }
         return current;
     }
@@ -567,7 +702,7 @@ public class MeFrpCommandHandler {
         if (message == null) {
             return false;
         }
-        return message.contains("当前在线") || message.contains("already online") || message.contains("is online");
+        return message.contains("当前在线") || message.contains("已经在运行中") || message.contains("already online") || message.contains("is online");
     }
 
     private boolean isForbiddenFailure(String message) {
@@ -702,15 +837,69 @@ public class MeFrpCommandHandler {
 
     private void runApi(ApiTask task) {
         Object context = platform.captureCommandContext();
-        executor.execute(() -> platform.runWithCommandContext(context, () -> {
+        submitSessionTask(generation -> platform.runWithCommandContext(context, () -> {
             try {
-                task.run();
+                task.run(generation);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
             } catch (ApiException e) {
-                platform.sendMessage("[MeFrp] API 请求失败: " + e.getMessage());
+                if (isCurrentSession(generation)) {
+                    platform.sendMessage("[MeFrp] API 请求失败: " + e.getMessage());
+                }
             } catch (Exception e) {
-                platform.sendMessage("[MeFrp] 操作失败: " + e.getMessage());
+                if (isCurrentSession(generation)) {
+                    platform.sendMessage("[MeFrp] 操作失败: " + e.getMessage());
+                }
             }
         }));
+    }
+
+    private ExecutorService newExecutor() {
+        return Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "MeFrp-MC-Mod");
+            thread.setDaemon(true);
+            return thread;
+        });
+    }
+
+    private void submitSessionTask(SessionTask task) {
+        ExecutorService active;
+        long generation;
+        synchronized (lifecycleLock) {
+            if (!sessionActive || executor == null) {
+                return;
+            }
+            active = executor;
+            generation = sessionGeneration;
+        }
+        try {
+            active.execute(() -> {
+                if (!isCurrentSession(generation)) {
+                    return;
+                }
+                task.run(generation);
+            });
+        } catch (RejectedExecutionException ignored) {
+        }
+    }
+
+    private void ensureSessionActive(long generation) throws InterruptedException {
+        if (Thread.currentThread().isInterrupted() || !isCurrentSession(generation)) {
+            throw new InterruptedException();
+        }
+    }
+
+    private void ensureStartedSession(long generation, long launch) throws InterruptedException {
+        if (Thread.currentThread().isInterrupted() || !isCurrentSession(generation)) {
+            mefrpcManager.stop(launch);
+            throw new InterruptedException();
+        }
+    }
+
+    private boolean isCurrentSession(long generation) {
+        synchronized (lifecycleLock) {
+            return sessionActive && generation == sessionGeneration;
+        }
     }
 
     private boolean shouldExposeOnlineModeCommand() {
@@ -748,7 +937,11 @@ public class MeFrpCommandHandler {
     }
 
     private interface ApiTask {
-        void run() throws Exception;
+        void run(long generation) throws Exception;
+    }
+
+    private interface SessionTask {
+        void run(long generation);
     }
 
     private static final class PendingNodeSelection {

@@ -13,7 +13,9 @@ import com.mefrp.mc.api.model.UserInfo;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
+import java.io.Reader;
 import java.net.HttpURLConnection;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
@@ -145,10 +147,19 @@ public class MeFrpApiClient {
     }
 
     private JsonObject request(String method, String path, JsonObject body) throws ApiException {
+        boolean retryableMethod = "GET".equals(method);
+        int maxAttempts = retryableMethod ? MAX_ATTEMPTS : 1;
         ApiException last = null;
-        for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        int attemptsMade = 0;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+            if (Thread.currentThread().isInterrupted()) {
+                throw new ApiException("请求被中断");
+            }
+            attemptsMade = attempt;
+            boolean retryable = false;
+            HttpURLConnection connection = null;
             try {
-                HttpURLConnection connection = (HttpURLConnection) URI.create(MeFrpConstants.API_BASE_URL + path).toURL().openConnection();
+                connection = (HttpURLConnection) URI.create(MeFrpConstants.API_BASE_URL + path).toURL().openConnection();
                 connection.setConnectTimeout(10000);
                 connection.setReadTimeout(20000);
                 connection.setRequestMethod(method);
@@ -158,7 +169,9 @@ public class MeFrpApiClient {
                     byte[] bytes = GSON.toJson(body).getBytes(StandardCharsets.UTF_8);
                     connection.setDoOutput(true);
                     connection.setRequestProperty("Content-Type", "application/json");
-                    connection.setRequestProperty("Content-Length", String.valueOf(bytes.length));
+                    // Streaming mode makes HttpURLConnection treat the request as non-retryable,
+                    // preventing an automatic POST replay that could duplicate side effects.
+                    connection.setFixedLengthStreamingMode(bytes.length);
                     OutputStream output = connection.getOutputStream();
                     try {
                         output.write(bytes);
@@ -169,40 +182,86 @@ public class MeFrpApiClient {
                 int statusCode = connection.getResponseCode();
                 InputStream stream = statusCode >= 200 && statusCode < 400 ? connection.getInputStream() : connection.getErrorStream();
                 String text = readAll(stream).trim();
-                if (text.startsWith("<")) {
+                if (Thread.currentThread().isInterrupted()) {
+                    throw new ApiException("请求被中断");
+                }
+                boolean html = text.startsWith("<");
+                JsonObject root = html || text.isEmpty() ? null : parseObject(text);
+                if (statusCode < 200 || statusCode >= 300) {
+                    String message = html
+                            ? "API 可能被 CDN/WAF 拦截，请稍后再试"
+                            : apiErrorMessage(statusCode, root);
+                    if (isRetryableStatus(statusCode)) {
+                        throw new RetryableApiException(message);
+                    }
+                    throw new ApiException(message);
+                }
+                if (html) {
                     throw new ApiException("API 可能被 CDN/WAF 拦截，请稍后再试");
                 }
-                JsonObject root = GSON.fromJson(text, JsonObject.class);
-                if (statusCode < 200 || statusCode >= 300) {
-                    throw new ApiException(apiErrorMessage(statusCode, root));
+                if (root == null) {
+                    throw new ApiException("API 调用失败");
                 }
                 if (root.has("code") && root.get("code").getAsInt() != 200) {
                     throw new ApiException(apiErrorMessage(root.get("code").getAsInt(), root));
                 }
                 return root;
-            } catch (IOException | RuntimeException e) {
-                last = new ApiException("网络连接失败", e);
-            } catch (ApiException e) {
-                last = e;
-            }
-
-            if (attempt < MAX_ATTEMPTS) {
-                try {
-                    Thread.sleep(1000L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
+            } catch (IOException e) {
+                if (Thread.currentThread().isInterrupted()) {
                     throw new ApiException("请求被中断", e);
                 }
+                last = new ApiException("网络连接失败", e);
+                retryable = true;
+            } catch (RetryableApiException e) {
+                last = e;
+                retryable = true;
+            } catch (ApiException e) {
+                last = e;
+            } catch (RuntimeException e) {
+                last = new ApiException("API 调用失败", e);
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
+            }
+
+            if (!retryable || attempt >= maxAttempts) {
+                break;
+            }
+            try {
+                Thread.sleep(1000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new ApiException("请求被中断", e);
             }
         }
-        throw new ApiException(last == null ? "API 调用失败" : last.getMessage() + "（已重试2次）", last);
+        String message = last == null ? "API 调用失败" : last.getMessage();
+        if (attemptsMade == MAX_ATTEMPTS) {
+            message += "（已重试" + (MAX_ATTEMPTS - 1) + "次）";
+        }
+        throw new ApiException(message, last);
+    }
+
+    private JsonObject parseObject(String text) {
+        try {
+            return GSON.fromJson(text, JsonObject.class);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private boolean isRetryableStatus(int statusCode) {
+        return statusCode == 408 || statusCode == 429 || statusCode >= 500;
     }
 
     private String apiErrorMessage(int code, JsonObject root) {
         if (root != null && root.has("message") && !root.get("message").isJsonNull()) {
-            String message = root.get("message").getAsString();
-            if (message != null && !message.trim().isEmpty()) {
-                return message;
+            JsonElement messageElement = root.get("message");
+            if (messageElement.isJsonPrimitive()) {
+                String message = messageElement.getAsString();
+                if (message != null && !message.trim().isEmpty()) {
+                    return message;
+                }
             }
         }
         if (code == 401) {
@@ -215,16 +274,22 @@ public class MeFrpApiClient {
         if (stream == null) {
             return "";
         }
-        byte[] buffer = new byte[4096];
         StringBuilder builder = new StringBuilder();
-        try {
+        try (Reader reader = new InputStreamReader(stream, StandardCharsets.UTF_8)) {
+            char[] buffer = new char[4096];
             int read;
-            while ((read = stream.read(buffer)) >= 0) {
-                builder.append(new String(buffer, 0, read, StandardCharsets.UTF_8));
+            while ((read = reader.read(buffer)) >= 0) {
+                builder.append(buffer, 0, read);
             }
             return builder.toString();
-        } finally {
-            stream.close();
+        }
+    }
+
+    private static final class RetryableApiException extends ApiException {
+        private static final long serialVersionUID = 1L;
+
+        private RetryableApiException(String message) {
+            super(message);
         }
     }
 }

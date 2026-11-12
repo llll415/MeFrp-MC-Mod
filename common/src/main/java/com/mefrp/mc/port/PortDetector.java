@@ -15,13 +15,6 @@ public class PortDetector {
         this.platform = platform;
     }
 
-    public boolean acceptChatMessage(String message) {
-        return false;
-    }
-
-    public void markLanOpened() {
-    }
-
     public OptionalInt detect(Integer explicitPort) {
         if (explicitPort != null) {
             return validPort(explicitPort) ? OptionalInt.of(explicitPort) : OptionalInt.empty();

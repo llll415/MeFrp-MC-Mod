@@ -33,18 +33,14 @@ public final class MeFrp {
         return mefrpcManager;
     }
 
-    public static void onChatMessage(String message) {
-        if (commandHandler.portDetector().acceptChatMessage(message)) {
-            onLanOpened();
-        }
-    }
-
     public static void onLanOpened() {
-        commandHandler.portDetector().markLanOpened();
         commandHandler.showOnlineModeHintIfAvailable();
     }
 
     public static void onPlayerReady() {
+        if (commandHandler != null) {
+            commandHandler.onSessionStart();
+        }
         long now = System.currentTimeMillis();
         if (now - lastPlayerReadyMillis < 3000L) {
             return;
@@ -58,6 +54,9 @@ public final class MeFrp {
     }
 
     public static void onShutdown() {
+        if (commandHandler != null) {
+            commandHandler.onSessionEnd();
+        }
         if (mefrpcManager != null) {
             mefrpcManager.stop();
         }

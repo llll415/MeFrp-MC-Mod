@@ -3,7 +3,6 @@ package com.mefrp.mc.forge;
 import com.mefrp.mc.MeFrp;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.client.ClientCommandHandler;
-import net.minecraftforge.client.event.ClientChatReceivedEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.fml.common.FMLCommonHandler;
 import net.minecraftforge.fml.common.Mod;
@@ -21,6 +20,7 @@ import java.util.Map;
 public class MeFrpForge {
     public static final MeFrpForgePlatform PLATFORM = new MeFrpForgePlatform();
     private static boolean playerWasPresent;
+    private static boolean lanWasPublished;
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
@@ -49,11 +49,6 @@ public class MeFrpForge {
     }
 
     @SubscribeEvent
-    public void onChat(ClientChatReceivedEvent event) {
-        MeFrp.onChatMessage(event.getMessage().getUnformattedText());
-    }
-
-    @SubscribeEvent
     public void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
@@ -68,5 +63,12 @@ public class MeFrpForge {
             });
         }
         playerWasPresent = playerPresent;
+
+        boolean lanPublished = Minecraft.getMinecraft().getIntegratedServer() != null
+                && Minecraft.getMinecraft().getIntegratedServer().getPublic();
+        if (lanPublished && !lanWasPublished) {
+            MeFrp.onLanOpened();
+        }
+        lanWasPublished = lanPublished;
     }
 }
