@@ -78,6 +78,7 @@ MeFrp-MC-Mod 可以在游戏内帮助玩家完成 MeFrp 联机流程：检测局
 | `/mefrp select <编号>` | 选择节点列表中的指定节点 |
 | `/mefrp online on` | 开启局域网正版验证 |
 | `/mefrp online off` | 关闭局域网正版验证 |
+| `/mefrp config reset` | 重建本地配置文件（清空密钥） |
 
 说明：
 
@@ -140,9 +141,10 @@ config/mefrp.json
 config/mefrp/bin/
 ```
 
-请不要把 `config/mefrp.json` 分享给别人，里面以**明文**保存了你的 MeFrp API 访问密钥（`/mefrp token <访问密钥>` 就是直接写入这个文件）。
-因此导出或分享整合包时请格外注意，先确认该文件已移除或清空。
-若怀疑密钥泄露，请立即前往 [MeFrp 官网](https://www.mefrp.com) 用户中心重置访问密钥，以免造成损失。
+访问密钥会使用本机机器码加密保存（AES-GCM），跨机器通常无法解密。
+但为安全起见，**导出或分享整合包时仍建议移除该文件**。
+若更换机器、重装系统导致解密失败，或配置损坏，可输入 `/mefrp config reset` 重建配置后重新绑定。
+若怀疑密钥泄露，请立即前往 [MeFrp 官网](https://www.mefrp.com) 用户中心重置访问密钥。
 
 ## 支持版本及其测试情况
 
